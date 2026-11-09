@@ -70,3 +70,13 @@ def test_render_yaml_rejects_invalid_yaml(tmp_path, monkeypatch):
 
     with pytest.raises(yaml.YAMLError):
         render.render_yaml("bad.yml.j2", {})
+
+
+def test_clean_render_dir_removes_only_stale_modules(tmp_path, monkeypatch):
+    (tmp_path / "stale.py").write_text("STALE = True\n")
+    (tmp_path / ".gitignore").write_text("*\n")
+    monkeypatch.setattr(render, "RENDER_DIR", tmp_path)
+
+    render.clean_render_dir()
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".gitignore"]
