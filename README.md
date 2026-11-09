@@ -142,6 +142,11 @@ With `src_galaxy_rabbitmq: true` the playbook installs RabbitMQ from Ubuntu's `r
 * **Users**: the default `guest` user is removed. A `galaxy` user without management tags is created. Each user's password is generated once and stored in `/etc/galaxy-rabbitmq/<user>.pass` (`root:root 0600`, directory `0700`), so re-runs keep the same passwords. Tasks that handle passwords use `no_log`.
 * **Extending**: append vhosts to `_galaxy_rabbitmq_vhosts` (the `galaxy` user gets full permissions on each) and users as `{name, vhosts, tags}` to `_galaxy_rabbitmq_users` in [vars/rabbitmq_vars.yml](vars/rabbitmq_vars.yml). The playbook sets `_galaxy_rabbitmq_passwords` (user name → password) for building `amqp_url`s. This version creates no Pulsar vhosts yet.
 * Galaxy's Celery keeps using Postgres. RabbitMQ is only for Pulsar.
+* **Connection URLs** (one vhost per Pulsar server, and one Galaxy MQ runner per vhost):
+  * Galaxy runner `amqp_url`: `pyamqp://galaxy:<password>@localhost:5672//pulsar/<name>` (plain AMQP over loopback).
+  * Pulsar `message_queue_url`: `pyamqp://<pulsar user>:<password>@<workspace_fqdn>:<src_galaxy_rabbitmq_port>//pulsar/<name>?ssl=1`. The vhost's leading `/` follows the port's `/`, hence `//`.
+  * `?ssl=1` alone encrypts the connection but does **not** verify the server certificate's hostname (py-amqp default). To verify it, set Pulsar's `amqp_connect_ssl_cert_reqs: required` and `amqp_connect_ssl_ca_certs`.
+  * Generated passwords contain only letters and digits, so they need no URL escaping.
 * **Ubuntu versions**: tested on Ubuntu 24.04 (noble: RabbitMQ 3.12.1, Erlang 25.3) and, in the molecule CI, on Ubuntu 22.04 (jammy: RabbitMQ 3.9, Erlang 24). The same configuration works on both.
 
 The [`usegalaxy_eu.rabbitmqserver`](https://github.com/usegalaxy-eu/ansible-rabbitmq) role used in the GTN Pulsar tutorial is not used, because it runs RabbitMQ in Docker:

@@ -188,3 +188,34 @@ def test_rabbitmqctl_modules_target_the_loopback_node():
 
     assert len(calls) == 3
     assert {call.get("node") for call in calls} == {"{{ _galaxy_rabbitmq_node }}"}
+
+
+def test_pulsar_layout_one_vhost_per_pulsar_shared_with_galaxy():
+    # Issue #4: one MQ runner per Pulsar vhost. Galaxy connects as `galaxy` over 127.0.0.1:5672,
+    # the remote Pulsar as its own user over AMQPS; both need full rights on that vhost.
+    users = [
+        {"name": "galaxy", "vhosts": ["/pulsar/eu"]},
+        {"name": "pulsar_eu", "vhosts": ["/pulsar/eu"]},
+    ]
+    resolved = _resolve(_galaxy_rabbitmq_vhosts=["/pulsar/eu"], _galaxy_rabbitmq_users=users)(
+        "_galaxy_rabbitmq_users_resolved"
+    )
+    full = {"vhost": "/pulsar/eu", "configure_priv": ".*", "read_priv": ".*", "write_priv": ".*"}
+
+    assert [(user["name"], user["permissions"]) for user in resolved] == [
+        ("galaxy", [full]),
+        ("pulsar_eu", [full]),
+    ]
+
+
+def test_generated_passwords_are_url_safe():
+    # Passwords are embedded verbatim in amqp_url / message_queue_url, so no URL-special characters.
+    contents = [
+        task["ansible.builtin.copy"]["content"]
+        for task in _tasks(TASKS_FILE)
+        if "lookup('ansible.builtin.password'"
+        in task.get("ansible.builtin.copy", {}).get("content", "")
+    ]
+
+    assert len(contents) == 1
+    assert "chars=['ascii_letters', 'digits']" in contents[0]
