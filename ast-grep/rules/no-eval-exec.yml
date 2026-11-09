@@ -1,0 +1,13 @@
+---
+id: no-eval-exec
+language: python
+severity: error
+message: Do not use eval()/exec(); job rules and helpers must not run dynamic code.
+note: >-
+  Galaxy dynamic job rules see user-controlled data (tool parameters, user
+  preferences). Parse values explicitly (int(), json.loads(), a lookup table).
+rule:
+  kind: call
+  has:
+    field: function
+    regex: ^(eval|exec|builtins\.eval|builtins\.exec)$

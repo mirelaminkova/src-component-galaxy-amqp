@@ -19,7 +19,8 @@ _galaxy_use_interactive_tools: "{{ src_galaxy_interactive_tools | default(false,
 _galaxy_server_fqdn: "{{ workspace_fqdn | default('localhost', true) }}"
 _galaxy_jobs_fallback: singularity
 _galaxy_jobs_default: >-
-  {{ (src_galaxy_jobs_default is not defined or src_galaxy_jobs_default not in _galaxy_job_destinations) | ternary(_galaxy_jobs_fallback, src_galaxy_jobs_default) }}
+  {{ (src_galaxy_jobs_default is not defined or src_galaxy_jobs_default not in _galaxy_job_destinations)
+  | ternary(_galaxy_jobs_fallback, src_galaxy_jobs_default) }}
 _galaxy_enable_docker: "{{ _galaxy_use_interactive_tools or (_galaxy_jobs_default == 'docker') }}"
 _galaxy_enable_tus: "{{ src_galaxy_enable_tus | default(true, true) | bool }}"
 _galaxy_enable_cvmfs: "{{ _molecule_active | ternary(false, src_galaxy_cvmfs | default(true, true) | bool) }}"
@@ -34,7 +35,7 @@ _galaxy_pulsar_configs_input: "{{ src_galaxy_pulsar_configs | default('', true) 
 _galaxy_pulsar_tool_mappings_input: "{{ src_galaxy_pulsar_tool_mappings | default('', true) }}"
 
 # Parse Pulsar configs
-# The Pulsar config redirects users to copy and pass yml strings via the component vars. The config normalises the passed strings  
+# The Pulsar config redirects users to copy and pass yml strings via the component vars. The config normalises the passed strings
 _galaxy_pulsar_configs_raw: >-
   {%- if _galaxy_pulsar_configs_input == '' or _galaxy_pulsar_configs_input == '[]' -%}
   []

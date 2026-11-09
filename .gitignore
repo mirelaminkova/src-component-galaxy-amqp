@@ -11,3 +11,6 @@ __pycache__/
 .coverage.*
 coverage.xml
 htmlcov/
+
+# ansible-lint installs requirements.yml dependencies here
+.ansible/
