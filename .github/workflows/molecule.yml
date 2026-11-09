@@ -8,13 +8,17 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
 
   molecule:
     runs-on: ubuntu-latest
     env:
       ANSIBLE_FORCE_COLOR: '1'
-      ANSIBLE_STDOUT_CALLBACK: yaml
+      # The community.general 'yaml' stdout callback was removed in community.general 12.
+      ANSIBLE_CALLBACK_RESULT_FORMAT: yaml
       CRUN_VER: 1.11.2
       REQUIREMENTS_FILE: molecule/requirements.txt
       BOOTSTRAP_KEY: foobar  # defines an api bootstrap key for the molecule tests
@@ -34,12 +38,13 @@ jobs:
           ]
           EOF
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: true
-      - uses: actions/setup-python@v4
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - run: pip install -r ${{ env.REQUIREMENTS_FILE }}
       - name: Molecule tests
         run: |
