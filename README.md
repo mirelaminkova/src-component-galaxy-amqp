@@ -147,7 +147,7 @@ With `src_galaxy_rabbitmq: true` the playbook installs RabbitMQ from Ubuntu's `r
   * Pulsar `message_queue_url`: `pyamqp://<pulsar user>:<password>@<workspace_fqdn>:<src_galaxy_rabbitmq_port>//pulsar/<name>?ssl=1`. The vhost's leading `/` follows the port's `/`, hence `//`.
   * `?ssl=1` alone encrypts the connection but does **not** verify the server certificate's hostname (py-amqp default). To verify it, set Pulsar's `amqp_connect_ssl_cert_reqs: required` and `amqp_connect_ssl_ca_certs`.
   * Generated passwords contain only letters and digits, so they need no URL escaping.
-* **Ubuntu versions**: tested on Ubuntu 24.04 (noble: RabbitMQ 3.12.1, Erlang 25.3) and, in the molecule CI, on Ubuntu 22.04 (jammy: RabbitMQ 3.9, Erlang 24). The same configuration works on both.
+* **Ubuntu versions**: tested end to end on Ubuntu 24.04 (noble: RabbitMQ 3.12.1, Erlang 25.3). Ubuntu 22.04 (jammy) ships older RabbitMQ (3.9) and Erlang (24) that support the same settings (TLS 1.3, `distribution.listener.interface`), but the configuration has not been verified there; the molecule scenario (jammy image) prints the installed versions in `verify.yml`.
 
 The [`usegalaxy_eu.rabbitmqserver`](https://github.com/usegalaxy-eu/ansible-rabbitmq) role used in the GTN Pulsar tutorial is not used, because it runs RabbitMQ in Docker:
 * the molecule tests cannot run Docker;
