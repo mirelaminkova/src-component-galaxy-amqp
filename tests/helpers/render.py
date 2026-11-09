@@ -17,6 +17,7 @@ from pathlib import Path
 from types import ModuleType
 
 import jinja2
+import yaml
 from ansible.plugins.filter.core import FilterModule
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +43,11 @@ def make_environment() -> jinja2.Environment:
 def render_template(name: str, variables: dict) -> str:
     """Render ``templates/<name>`` with ``variables`` and return the text."""
     return make_environment().get_template(name).render(**variables)
+
+
+def render_yaml(name: str, variables: dict) -> object:
+    """Render ``templates/<name>`` and parse the result as YAML (raises on invalid YAML)."""
+    return yaml.safe_load(render_template(name, variables))
 
 
 def clean_render_dir() -> None:

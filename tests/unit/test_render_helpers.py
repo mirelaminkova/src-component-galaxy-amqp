@@ -2,6 +2,7 @@
 
 import jinja2
 import pytest
+import yaml
 
 from tests.helpers import render
 
@@ -54,3 +55,18 @@ def test_render_module_writes_and_imports_the_rendered_source(tmp_path, monkeypa
 
     assert module.VALUE == "hello"
     assert (tmp_path / "out" / "rule.py").read_text() == "VALUE = 'hello'\n"
+
+
+def test_render_yaml_parses_the_rendered_text(tmp_path, monkeypatch):
+    (tmp_path / "conf.yml.j2").write_text("key: {{ value }}\nlist: [1, 2]\n")
+    monkeypatch.setattr(render, "TEMPLATES_DIR", tmp_path)
+
+    assert render.render_yaml("conf.yml.j2", {"value": "v"}) == {"key": "v", "list": [1, 2]}
+
+
+def test_render_yaml_rejects_invalid_yaml(tmp_path, monkeypatch):
+    (tmp_path / "bad.yml.j2").write_text("key: [unclosed\n")
+    monkeypatch.setattr(render, "TEMPLATES_DIR", tmp_path)
+
+    with pytest.raises(yaml.YAMLError):
+        render.render_yaml("bad.yml.j2", {})
