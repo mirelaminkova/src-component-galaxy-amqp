@@ -6,24 +6,12 @@ pin the types the Galaxy config templates rely on.
 """
 
 import pytest
-from ansible.parsing.dataloader import DataLoader
-from ansible.template import Templar, trust_as_template
 
-from tests.helpers.render import REPO_ROOT
-
-VARS_FILE = REPO_ROOT / "vars" / "src_galaxy_vars.yml"
+from tests.helpers.ansible_vars import resolve_vars
 
 
 def _evaluate(name, **component_params):
-    # Ansible trusts strings from vars_files as templates; mirror that here.
-    loaded = DataLoader().load_from_file(str(VARS_FILE))
-    trusted = {
-        key: trust_as_template(value) if isinstance(value, str) else value
-        for key, value in loaded.items()
-    }
-    variables = {**trusted, **component_params}
-    templar = Templar(loader=DataLoader(), variables=variables)
-    return templar.template(trust_as_template(f"{{{{ {name} }}}}"))
+    return resolve_vars(["src_galaxy_vars.yml"], component_params)(name)
 
 
 @pytest.mark.parametrize("value", [None, "", "[]"])
