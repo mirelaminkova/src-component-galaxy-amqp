@@ -2,12 +2,8 @@
 driver:
   name: podman
   image_settings: &image_settings
+    # Public image on ghcr.io: no registry login needed.
     pre_build_image: true
-    registry:
-      url: $DOCKER_REGISTRY
-      credentials:
-        username: $DOCKER_USER
-        password: $DOCKER_PW
 platforms:
   - name: workspace-src-ubuntu_jammy
     image: ghcr.io/utrechtuniversity/src-test-workspace:ubuntu_jammy-nginx
