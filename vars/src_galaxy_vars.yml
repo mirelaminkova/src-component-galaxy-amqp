@@ -38,7 +38,7 @@ _galaxy_pulsar_tool_mappings_input: "{{ src_galaxy_pulsar_tool_mappings | defaul
 # The Pulsar config redirects users to copy and pass yml strings via the component vars. The config normalises the passed strings
 _galaxy_pulsar_configs_raw: >-
   {%- if _galaxy_pulsar_configs_input == '' or _galaxy_pulsar_configs_input == '[]' -%}
-  []
+  {{ [] }}
   {%- else -%}
     {%- set step1 = _galaxy_pulsar_configs_input | regex_replace('([{,]\s*)(\w+):', '\\1"\\2":') -%}
     {%- set step2 = step1 | regex_replace(':\s*([^,\[\]{}"\'\s][^,\[\]{}]*?)(\s*[,}\]])', ': "\\1"\\2') -%}
@@ -49,7 +49,7 @@ _galaxy_pulsar_configs_raw: >-
 # Parse tool mappings
 _galaxy_pulsar_tool_mappings: >-
   {%- if _galaxy_pulsar_tool_mappings_input == '' or _galaxy_pulsar_tool_mappings_input == '[]' -%}
-  []
+  {{ [] }}
   {%- else -%}
     {%- set step1 = _galaxy_pulsar_tool_mappings_input | regex_replace('([{,]\s*)(\w+):', '\\1"\\2":') -%}
     {%- set step2 = step1 | regex_replace(':\s*([^,\[\]{}"\'\s][^,\[\]{}]*?)(\s*[,}\]])', ': "\\1"\\2') -%}
