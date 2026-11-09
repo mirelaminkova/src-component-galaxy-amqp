@@ -98,6 +98,10 @@
       when: _galaxy_use_dispatcher
       notify: restart galaxy
 
+    - name: Install RabbitMQ for remote Pulsar servers (AMQPS)
+      ansible.builtin.include_tasks: tasks/rabbitmq.yml
+      when: _galaxy_rabbitmq
+
     - name: Add nginx user to galaxy group
       ansible.builtin.user:
         name: www-data

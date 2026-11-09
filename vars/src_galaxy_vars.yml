@@ -25,6 +25,8 @@ _galaxy_enable_docker: "{{ _galaxy_use_interactive_tools or (_galaxy_jobs_defaul
 _galaxy_enable_tus: "{{ src_galaxy_enable_tus | default(true, true) | bool }}"
 _galaxy_enable_cvmfs: "{{ _molecule_active | ternary(false, src_galaxy_cvmfs | default(true, true) | bool) }}"
 _galaxy_brand: "{{ src_galaxy_brand | default('SURF ResearchCloud', true) }}"
+_galaxy_rabbitmq: "{{ src_galaxy_rabbitmq | default(false, true) | bool }}"
+_galaxy_rabbitmq_port: "{{ src_galaxy_rabbitmq_port | default(5671, true) | int }}"
 
 # Build the final lists of tool and workflow installation files
 

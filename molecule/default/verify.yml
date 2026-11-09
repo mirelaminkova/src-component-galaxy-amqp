@@ -92,3 +92,87 @@
         that:
           - "'byoc_pulsar' in (issue5_sections | map(attribute='name'))"
           - issue5_compute.inputs[0].value == 'remote_molecule_basic'
+
+    # --- RabbitMQ (src_galaxy_rabbitmq: 'true' in converge.yml) ---
+
+    - name: Get RabbitMQ service state
+      ansible.builtin.command: systemctl is-active rabbitmq-server
+      changed_when: false
+      register: rabbitmq_active
+
+    - name: Get RabbitMQ and Erlang versions
+      ansible.builtin.shell: >-
+        set -o pipefail &&
+        dpkg-query -W -f '${Package} ${Version}\n' rabbitmq-server erlang-base
+      args:
+        executable: /bin/bash
+      changed_when: false
+      register: rabbitmq_versions
+
+    - name: Show RabbitMQ and Erlang versions
+      ansible.builtin.debug:
+        var: rabbitmq_versions.stdout_lines
+
+    - name: Get listening TCP sockets
+      ansible.builtin.command: ss -Hltn
+      changed_when: false
+      register: listening
+
+    - name: Get RabbitMQ users
+      ansible.builtin.command: rabbitmqctl list_users --silent
+      changed_when: false
+      register: rabbitmq_users
+
+    - name: Get explicitly enabled RabbitMQ plugins
+      ansible.builtin.command: rabbitmq-plugins list --enabled --minimal --silent
+      changed_when: false
+      register: rabbitmq_plugins
+
+    - name: Stat RabbitMQ secrets and TLS files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/galaxy-rabbitmq
+        - /etc/galaxy-rabbitmq/galaxy.pass
+        - /etc/rabbitmq/tls/key.pem
+        - /etc/ssl/acme/localhost/key.pem
+      register: rabbitmq_files
+
+    - name: Authenticate the galaxy user with its stored password
+      ansible.builtin.shell: rabbitmqctl authenticate_user galaxy "$(cat /etc/galaxy-rabbitmq/galaxy.pass)"
+      changed_when: false
+      no_log: true
+
+    - name: TLS handshake on the AMQPS port
+      ansible.builtin.shell: openssl s_client -connect 127.0.0.1:5671 -servername localhost </dev/null
+      changed_when: false
+      register: amqps_handshake
+
+    - name: RabbitMQ assertions
+      vars:
+        sockets: "{{ listening.stdout_lines | map('split') | map(attribute=3) | list }}"
+        amqp_sockets: "{{ sockets | select('match', '.*:5672$') | list }}"
+        dist_sockets: "{{ sockets | select('match', '.*:(4369|25672)$') | list }}"
+        users: "{{ rabbitmq_users.stdout_lines | map('split') | map('first') | list }}"
+        files: "{{ rabbitmq_files.results | items2dict(key_name='item', value_name='stat') }}"
+      ansible.builtin.assert:
+        that:
+          - rabbitmq_active.stdout == 'active'
+          - amqp_sockets | length > 0
+          - amqp_sockets | reject('match', '^127\.0\.0\.1:') | list == []
+          - dist_sockets | reject('match', '^(127\.0\.0\.1|\[::1\]):') | list == []
+          - sockets | select('match', '.*:5671$') | list | length > 0
+          - sockets | select('match', '.*:15672$') | list == []
+          - "'guest' not in users"
+          - "'galaxy' in users"
+          - "'rabbitmq_management' not in rabbitmq_plugins.stdout_lines"
+          - files['/etc/galaxy-rabbitmq'].mode == '0700'
+          - files['/etc/galaxy-rabbitmq'].pw_name == 'root'
+          - files['/etc/galaxy-rabbitmq/galaxy.pass'].mode == '0600'
+          - files['/etc/galaxy-rabbitmq/galaxy.pass'].pw_name == 'root'
+          - files['/etc/rabbitmq/tls/key.pem'].mode == '0640'
+          - files['/etc/rabbitmq/tls/key.pem'].pw_name == 'root'
+          - files['/etc/rabbitmq/tls/key.pem'].gr_name == 'rabbitmq'
+          - files['/etc/ssl/acme/localhost/key.pem'].mode == '0600'
+          - files['/etc/ssl/acme/localhost/key.pem'].gr_name == 'root'
+          - "'BEGIN CERTIFICATE' in amqps_handshake.stdout"

@@ -8,3 +8,4 @@ workspace_fqdn: set_to_your_fqdn
 src_galaxy_cvmfs: 'true'
 src_galaxy_jobs_default: singularity
 src_galaxy_byoc_pulsar: 'false'
+src_galaxy_rabbitmq: 'false'

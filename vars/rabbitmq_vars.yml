@@ -1,0 +1,35 @@
+---
+# Optional RabbitMQ broker on the Galaxy host (src_galaxy_rabbitmq), for Pulsar servers using AMQPS.
+
+# Node name; epmd (Erlang port mapper) only listens on 127.0.0.1, so the node is named after the loopback host.
+_galaxy_rabbitmq_node: rabbit@localhost
+
+# Root-only directory holding one generated password per RabbitMQ user (<name>.pass).
+_galaxy_rabbitmq_secrets_dir: /etc/galaxy-rabbitmq
+# Copy of the SRC Nginx plugin certificate and key that the rabbitmq group may read.
+_galaxy_rabbitmq_tls_dir: /etc/rabbitmq/tls
+# Plain AMQP, bound to 127.0.0.1 only (for Galaxy itself).
+_galaxy_rabbitmq_local_port: 5672
+_galaxy_rabbitmq_tls_versions:
+  - tlsv1.3
+  - tlsv1.2
+
+# Extension points for later features (AMQP Pulsar runner, BYOC sync):
+# append vhosts to _galaxy_rabbitmq_vhosts (the galaxy user gets full permissions on each),
+# and users as {name, vhosts: [...], tags: ''} to _galaxy_rabbitmq_users.
+_galaxy_rabbitmq_vhosts: []
+_galaxy_rabbitmq_users:
+  - name: galaxy
+    vhosts: "{{ _galaxy_rabbitmq_vhosts }}"
+
+# _galaxy_rabbitmq_users in the shape community.rabbitmq.rabbitmq_user expects.
+_galaxy_rabbitmq_users_resolved: >-
+  {%- set users = [] -%}
+  {%- for user in _galaxy_rabbitmq_users -%}
+    {%- set permissions = [] -%}
+    {%- for vhost in user.vhosts | default([]) -%}
+      {%- set _ = permissions.append({'vhost': vhost, 'configure_priv': '.*', 'read_priv': '.*', 'write_priv': '.*'}) -%}
+    {%- endfor -%}
+    {%- set _ = users.append({'name': user.name, 'tags': user.tags | default(''), 'permissions': permissions}) -%}
+  {%- endfor -%}
+  {{ users }}
