@@ -16,3 +16,50 @@ preferences:
               required: True
               type: text
 {% endif %}
+{% if _galaxy_remote_destinations | length > 0 %}
+    # Read by the default_dispatcher job rule as "distributed_compute|remote_resources".
+    distributed_compute:
+        description: Use distributed compute resources
+        inputs:
+            - name: remote_resources
+              label: Remote resources id
+              type: select
+              required: False
+              options:
+                  - ["default - Galaxy will decide where to put your job", None]
+{% for destination in _galaxy_remote_destinations %}
+                  - {{ [destination.label, destination.id] | to_json }}
+{% endfor %}
+{% endif %}
+{% if _galaxy_byoc_pulsar %}
+    byoc_pulsar:
+        description: >
+            Bring your own Pulsar endpoint to Galaxy. You can add here your Pulsar credentials and specifications.
+            This is an experimental feature: the values are stored, but Galaxy does not schedule jobs to your Pulsar yet.
+            Contact the administrators if you want to learn more about it.
+        inputs:
+            - name: username
+              label: RabbitMQ custom username (e.g. mypulsarendpoint).
+              type: text
+              required: False
+            - name: password
+              label: RabbitMQ custom alphanumerical password, at least 10 characters long (e.g. MyPulS4rP4ssw0rd).
+              type: secret
+              required: False
+            - name: max_accepted_cores
+              label: Maximum number of CPU cores available.
+              type: number
+              required: False
+            - name: max_accepted_mem
+              label: Maximum number of RAM available (in GB).
+              type: number
+              required: False
+            - name: min_accepted_gpus
+              label: Minimum number of GPU available (set this to zero if you don't want to share GPUs).
+              type: number
+              required: False
+            - name: max_accepted_gpus
+              label: Maximum number of GPU available (set this to zero if you don't want to share GPUs).
+              type: number
+              required: False
+{% endif %}

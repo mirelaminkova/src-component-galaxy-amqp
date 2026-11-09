@@ -46,6 +46,8 @@ on the Galaxy machine won't have access to this secret key, they cannot directly
 
 A Galaxy machine can be connected to Pulsar inside the SRC, following the [SRC component Pulsar](https://github.com/ErasmusMC-Bioinformatics/src-component-pulsar) instructions.
 
+When at least one Pulsar destination is configured (`src_galaxy_pulsar_configs`), users get a **Use distributed compute resources** select in their preferences (User → Preferences → Manage information). It lists "default - Galaxy will decide where to put your job" plus one entry per destination, labelled with the config's `label` key or else the host of its `url`. Jobs of a user who picked a destination are sent there by the `default_dispatcher` job rule, which is then `execution.default` in `job_conf.yml`. Some jobs always keep their normal destination: jobs of anonymous users, interactive tools (Docker), uploads (`upload1`, `__DATA_FETCH__`), data managers, expression and other Galaxy-internal tools, and tools pinned by `src_galaxy_pulsar_tool_mappings`. A choice whose destination no longer exists falls back to the default.
+
 ### Usability of external storage
 
 If you attach additional networked storage to the workspace, you can set `src_galaxy_storage_path` to a path on that storage volume. If your storage is e.g. called "galaxy storage", set the parameter to: `/data/galaxy_storage/datadir`. In theory, this should allow you to re-use datasets, tools, etc. from previous Galaxy workspaces.
@@ -69,6 +71,7 @@ The component takes the following parameters:
 * `src_galaxy_enable_tus`: Boolean. If true, enable support for performant and resumable uploads using [tusd](https://training.galaxyproject.org/training-material/topics/admin/tutorials/tus/tutorial.html).
 * `src_galaxy_cvmfs`: Boolean. If true, loads references data from [CVMFS](https://training.galaxyproject.org/training-material/topics/admin/tutorials/cvmfs/tutorial.html).
 * `src_galaxy_brand`: String. Brand name to display in the Galaxy webinterface.
+* `src_galaxy_byoc_pulsar`: Boolean (default: `false`). **Experimental.** Show the "Bring your own Pulsar" form (RabbitMQ username/password, maximum cores and memory, minimum/maximum GPUs) in the user preferences. The values are only stored for now; nothing uses them yet.
 
 ## Bootstrapping
 

@@ -61,3 +61,20 @@ _galaxy_has_pulsar: "{{ (_galaxy_pulsar_configs_raw | length > 0) | bool }}"
 # Note that some component parameters are also used in galaxy_vars.yml:
 # src_galaxy_storage_path
 # src_galaxy_version
+
+# --- Pulsar user preferences and preference-based job routing (issue #5) ---
+# Remote destinations users can pick under "Use distributed compute resources".
+# id: the `remote_<name>_basic` environment written by job_conf.yml.j2 (keep the
+# name logic in sync); label: the config's `label` key, or the host of its URL.
+_galaxy_remote_destinations: >-
+  {%- set ns = namespace(destinations=[]) -%}
+  {%- for pulsar in _galaxy_pulsar_configs_raw -%}
+    {%- set name = pulsar.name | default(pulsar.url | replace('https://', '') | replace('http://', '') | replace('.', '-') | replace('/', '-')) -%}
+    {%- set host = pulsar.url | regex_replace('^[a-zA-Z][a-zA-Z0-9+.-]*://', '') | regex_replace('[/:].*$', '') -%}
+    {%- set ns.destinations = ns.destinations + [{'id': 'remote_' ~ name ~ '_basic', 'label': pulsar.label | default(host, true)}] -%}
+  {%- endfor -%}
+  {{ ns.destinations }}
+# Route jobs through the default_dispatcher rule when there is anything to dispatch.
+_galaxy_use_dispatcher: "{{ _galaxy_use_interactive_tools or (_galaxy_remote_destinations | length > 0) }}"
+# Experimental "bring your own Pulsar" preference form (backend: issue #6).
+_galaxy_byoc_pulsar: "{{ src_galaxy_byoc_pulsar | default(false, true) | bool }}"

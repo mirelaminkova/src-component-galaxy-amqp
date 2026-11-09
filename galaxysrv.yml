@@ -87,6 +87,17 @@
       ansible.builtin.include_tasks: tasks/interactive_tools.yml
       when: _galaxy_use_interactive_tools
 
+    # Used by job_conf.yml as execution.default for interactive tools and/or Pulsar destinations
+    - name: Install the default_dispatcher job rule
+      ansible.builtin.template:
+        src: default_dispatch.py.j2
+        dest: "{{ galaxy_server_dir }}/lib/galaxy/jobs/rules/{{ _galaxy_default_dispatcher }}.py"
+        owner: "{{ galaxy_privsep_user }}"
+        group: "{{ galaxy_user }}"
+        mode: "0644"
+      when: _galaxy_use_dispatcher
+      notify: restart galaxy
+
     - name: Add nginx user to galaxy group
       ansible.builtin.user:
         name: www-data

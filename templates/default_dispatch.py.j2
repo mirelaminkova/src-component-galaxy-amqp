@@ -1,8 +1,49 @@
-from galaxy.jobs import JobDestination
-import os
+"""Galaxy dynamic job rule ``{{ _galaxy_default_dispatcher }}``.
 
-def {{ _galaxy_default_dispatcher }}(tool):
-  if tool.tool_type == 'interactive':
-    return 'docker'
-  else:
-    return '{{ _galaxy_jobs_default }}'
+Managed by Ansible (templates/default_dispatch.py.j2); local changes are overwritten.
+
+* Interactive tools run in Docker.
+* A logged-in user who picked a remote (Pulsar) destination in their preferences
+  ("Use distributed compute resources") gets their jobs sent there, unless the
+  tool must run next to Galaxy or is pinned by a tool mapping.
+* Everything else goes to the default destination.
+
+Galaxy injects ``tool`` and ``user`` by argument name; ``user`` is None for
+anonymous users.
+"""
+
+DEFAULT_DESTINATION = {{ _galaxy_jobs_default | to_json }}
+INTERACTIVE_DESTINATION = "docker"
+REMOTE_DESTINATIONS = frozenset({{ _galaxy_remote_destinations | map(attribute='id') | list | to_json }})
+PREFERENCE_KEY = "distributed_compute|remote_resources"
+
+# Tools that need Galaxy's own environment, database or files.
+LOCAL_TOOL_IDS = frozenset(["upload1", "__DATA_FETCH__"])
+LOCAL_TOOL_TYPES = frozenset(["manage_data", "expression", "interactive"])
+# Tools with an explicit environment in job_conf.yml (src_galaxy_pulsar_tool_mappings).
+PINNED_TOOL_IDS = frozenset({{ _galaxy_pulsar_tool_mappings | map(attribute='tool_id') | map('lower') | list | to_json }})
+
+
+def _preferred_destination(user):
+    if user is None:
+        return None
+    return user.extra_preferences.get(PREFERENCE_KEY)
+
+
+def _may_run_remotely(tool):
+    return not (
+        tool.old_id in LOCAL_TOOL_IDS
+        or tool.tool_type in LOCAL_TOOL_TYPES
+        or tool.tool_type_local
+        or tool.requires_galaxy_python_environment
+        or PINNED_TOOL_IDS.intersection(tool.all_ids)
+    )
+
+
+def {{ _galaxy_default_dispatcher }}(tool, user):
+    if tool.tool_type == "interactive":
+        return INTERACTIVE_DESTINATION
+    choice = _preferred_destination(user)
+    if choice in REMOTE_DESTINATIONS and _may_run_remotely(tool):
+        return choice
+    return DEFAULT_DESTINATION
