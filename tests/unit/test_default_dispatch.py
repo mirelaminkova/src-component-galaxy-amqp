@@ -149,6 +149,9 @@ def test_without_remote_destinations_preferences_are_ignored():
         ),
         pytest.param(_tool("__FILTER_FAILED_DATASETS__", tool_type_local=True), id="local_tool"),
         pytest.param(_tool("__SET_METADATA__", requires_galaxy=True), id="requires_galaxy"),
+        pytest.param(_tool("ucsc_table_direct1", tool_type="data_source"), id="data_source"),
+        pytest.param(_tool("async_source", tool_type="data_source_async"), id="data_source_async"),
+        pytest.param(_tool("my_yaml_tool", tool_type="user_defined"), id="user_defined"),
     ],
 )
 def test_tools_that_must_stay_local_are_never_sent_remote(tool):

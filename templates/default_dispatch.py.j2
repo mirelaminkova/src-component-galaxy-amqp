@@ -17,9 +17,20 @@ INTERACTIVE_DESTINATION = "docker"
 REMOTE_DESTINATIONS = frozenset({{ _galaxy_remote_destinations | map(attribute='id') | list | to_json }})
 PREFERENCE_KEY = "distributed_compute|remote_resources"
 
-# Tools that need Galaxy's own environment, database or files.
+# Tools that need Galaxy's own environment, database or files (data sources and
+# data managers write into Galaxy); user-defined tools must stay in Galaxy's
+# isolated environment.
 LOCAL_TOOL_IDS = frozenset(["upload1", "__DATA_FETCH__"])
-LOCAL_TOOL_TYPES = frozenset(["manage_data", "expression", "interactive"])
+LOCAL_TOOL_TYPES = frozenset(
+    [
+        "data_source",
+        "data_source_async",
+        "expression",
+        "interactive",
+        "manage_data",
+        "user_defined",
+    ]
+)
 # Tools with an explicit environment in job_conf.yml (src_galaxy_pulsar_tool_mappings).
 PINNED_TOOL_IDS = frozenset({{ _galaxy_pulsar_tool_mappings | map(attribute='tool_id') | map('lower') | list | to_json }})
 
