@@ -11,7 +11,7 @@ Also see the [official Galaxy training manual for SRC](https://training.galaxypr
 * The official [Galaxy postgres](https://github.com/galaxyproject/ansible-postgresql) and [postgres_objects](https://github.com/galaxyproject/ansible-postgresql-objects) roles for database management
 * The official [Galaxy CVMFS role](https://training.galaxyproject.org/training-material/topics/admin/tutorials/cvmfs/tutorial.html) and [Apptainer](https://training.galaxyproject.org/training-material/topics/admin/tutorials/apptainer/tutorial.html) provided by the Galaxy community
 * Assumes Nginx is already installed on the workspace (via the SURF Nginx component)
- 
+
 ## Overview
 
 ### Services
@@ -36,15 +36,15 @@ Note: only members of the `src_co_admin` group are given permission to install t
 
 ### Logging in via SSH
 
-The Galaxy VM will be accessible via SSH for users in the Collaborative Organization. However, only users in the CO admin group 
+The Galaxy VM will be accessible via SSH for users in the Collaborative Organization. However, only users in the CO admin group
 (configured by the `src_galaxy_co_admin_group` parameter, default: `src_co_admin`) will be able to `sudo` (this will require entering the user's SRAM TOTP). Other users are normal users.
 
 The Galaxy application listening on localhost will expect a secret key in the request header that Nginx is configured to pass on when reverse proxying; as non-admin users
 on the Galaxy machine won't have access to this secret key, they cannot directly query Galaxy on localhost.
 
-### Connecting to Pulsar 
+### Connecting to Pulsar
 
-A Galaxy machine can be connected to Pulsar inside the SRC, following the [SRC component Pulsar](https://github.com/ErasmusMC-Bioinformatics/src-component-pulsar) instructions. 
+A Galaxy machine can be connected to Pulsar inside the SRC, following the [SRC component Pulsar](https://github.com/ErasmusMC-Bioinformatics/src-component-pulsar) instructions.
 
 ### Usability of external storage
 
@@ -63,7 +63,7 @@ The component takes the following parameters:
 * `src_galaxy_bootstrap`: Boolean. Also see [below](#bootstrapping). If `true` (default), will attempt to install workflows, dataproviders and tools as configured by the following options:
     * `src_galaxy_tool_files`: String of comma-separated paths to YAML files (in this repo) containing tool specifications.
     * `src_galaxy_workflow_files`: String of comma-separated paths to `.ga` files (in this repo) containing workflow specifications.
-    * `src_galaxy_custom_repo`: String URL to a git repo containing workflow files (in the `workflows` dir of the root of the repo) and tool specification files (in the `tools` dir). Example repo: 
+    * `src_galaxy_custom_repo`: String URL to a git repo containing workflow files (in the `workflows` dir of the root of the repo) and tool specification files (in the `tools` dir). Example repo:
     * `src_galaxy_custom_repo_branch`: String branch of the custom repo to be used.
 * `src_galaxy_storage_path`: String filepath. Default: `/srv/galaxy/datadir`. Path where Galaxy's "mutable data directory" will be located. If you attach additional networked storage to the workspace, you can set `src_galaxy_storage_path` to a path on that storage volume. If your storage is e.g. called "galaxy storage", set the parameter to: `/data/galaxy_storage/datadir`. In theory, this should allow you to re-use datasets, tools, etc. from previous Galaxy workspaces.
 * `src_galaxy_enable_tus`: Boolean. If true, enable support for performant and resumable uploads using [tusd](https://training.galaxyproject.org/training-material/topics/admin/tutorials/tus/tutorial.html).
@@ -105,7 +105,7 @@ If boostrapping is enabled, this Ansible playbook will:
 1. Use the bootstrapping API key to create an admin user.
   * Use an API key belonging to the admin user to import workflows.
 
-If needed Galaxy, is restarted. Finally, the playbook will __always__ remove the bootstrapping API key. 
+If needed Galaxy, is restarted. Finally, the playbook will __always__ remove the bootstrapping API key.
 
 ## Interactive tools
 

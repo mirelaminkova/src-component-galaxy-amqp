@@ -1,0 +1,3 @@
+# Python modules rendered from templates by the unit tests (see tests/helpers/render.py).
+*
+!.gitignore
