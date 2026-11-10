@@ -1,0 +1,67 @@
+---
+# Bring your own Pulsar (src_galaxy_byoc_pulsar, issue #6): install galaxy-byoc-sync and its timer.
+# Runs after the galaxyproject.galaxy role (it needs the Galaxy database and job_conf_base.yml)
+# and before Galaxy is started, so job_conf.yml exists on the first start.
+
+- name: Install the YAML module for galaxy-byoc-sync
+  ansible.builtin.apt:
+    name: python3-yaml
+    state: present
+
+- name: Create root-only galaxy-byoc-sync directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - "{{ _galaxy_byoc_sync_config_dir }}"
+    - "{{ _galaxy_byoc_sync_state_dir }}"
+
+- name: Install galaxy-byoc-sync
+  ansible.builtin.copy:
+    src: files/byoc/galaxy_byoc_sync.py
+    dest: "{{ _galaxy_byoc_sync_script }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure galaxy-byoc-sync
+  ansible.builtin.template:
+    src: templates/byoc/config.json.j2
+    dest: "{{ _galaxy_byoc_sync_config_dir }}/config.json"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install the galaxy-byoc-sync service and timer
+  ansible.builtin.template:
+    src: "templates/byoc/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - "{{ _galaxy_byoc_sync_unit }}.service"
+    - "{{ _galaxy_byoc_sync_unit }}.timer"
+  register: _galaxy_byoc_units
+
+# Writes job_conf.yml from job_conf_base.yml; the playbook restarts Galaxy (handler) if it changed.
+- name: Sync BYOC endpoints and write job_conf.yml
+  ansible.builtin.command:
+    argv:
+      - "{{ _galaxy_byoc_sync_script }}"
+      - --config
+      - "{{ _galaxy_byoc_sync_config_dir }}/config.json"
+      - --no-restart
+  register: _galaxy_byoc_sync_run
+  changed_when: "'galaxy restart required' in _galaxy_byoc_sync_run.stdout"
+  notify: restart galaxy
+
+- name: Enable the galaxy-byoc-sync timer
+  ansible.builtin.systemd_service:
+    name: "{{ _galaxy_byoc_sync_unit }}.timer"
+    enabled: true
+    state: "{{ (_galaxy_byoc_units is changed) | ternary('restarted', 'started') }}"
+    daemon_reload: "{{ _galaxy_byoc_units is changed }}"

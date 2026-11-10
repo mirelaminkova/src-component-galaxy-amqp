@@ -16,7 +16,7 @@ preferences:
               required: True
               type: text
 {% endif %}
-{% if _galaxy_remote_destinations | length > 0 %}
+{% if _galaxy_remote_destinations | length > 0 or _galaxy_byoc_pulsar %}
     # Read by the default_dispatcher job rule as "distributed_compute|remote_resources".
     distributed_compute:
         description: Use distributed compute resources
@@ -30,20 +30,29 @@ preferences:
 {% for destination in _galaxy_remote_destinations %}
                   - {{ [destination.label, destination.id] | to_json }}
 {% endfor %}
+{% if _galaxy_byoc_pulsar %}
+                  # Only ever the user's own Pulsar (byoc_pulsar below); the job rule checks the owner.
+                  - ["My own Pulsar (Bring your own Pulsar, set up below)", "byoc"]
+{% endif %}
 {% endif %}
 {% if _galaxy_byoc_pulsar %}
     byoc_pulsar:
+        # galaxy-byoc-sync (files/byoc/galaxy_byoc_sync.py) reads these values.
         description: >
-            Bring your own Pulsar endpoint to Galaxy. You can add here your Pulsar credentials and specifications.
-            This is an experimental feature: the values are stored, but Galaxy does not schedule jobs to your Pulsar yet.
-            Contact the administrators if you want to learn more about it.
+            Bring your own Pulsar (experimental). Choose a RabbitMQ username and password below;
+            within {{ _galaxy_byoc_sync_interval_minutes }} minutes Galaxy creates your endpoint. Then set
+            message_queue_url in your Pulsar's app.yml to
+            pyamqp://byoc_USERNAME:PASSWORD@{{ _galaxy_server_fqdn }}:{{ _galaxy_rabbitmq_port }}//pulsar/byoc_USERNAME?ssl=1
+            and staging_directory to {{ _galaxy_byoc_jobs_directory }}, and select
+            "My own Pulsar" under "Use distributed compute resources" to send your jobs there.
+            Only your own jobs can run on your Pulsar.
         inputs:
             - name: username
-              label: RabbitMQ custom username (e.g. mypulsarendpoint).
+              label: RabbitMQ custom username, 3-32 characters from a-z 0-9 _ - (e.g. mypulsarendpoint).
               type: text
               required: False
             - name: password
-              label: RabbitMQ custom alphanumerical password, at least 10 characters long (e.g. MyPulS4rP4ssw0rd).
+              label: RabbitMQ custom password, 10-128 letters and digits only (e.g. MyPulS4rP4ssw0rd).
               type: secret
               required: False
             - name: max_accepted_cores

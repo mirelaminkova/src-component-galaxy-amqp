@@ -1,0 +1,11 @@
+# Managed by the src-component-galaxy playbook; local changes are overwritten.
+[Unit]
+Description=Provision bring-your-own Pulsar endpoints every {{ _galaxy_byoc_sync_interval_minutes }} minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec={{ _galaxy_byoc_sync_interval_minutes }}min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

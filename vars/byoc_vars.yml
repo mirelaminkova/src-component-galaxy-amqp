@@ -1,0 +1,78 @@
+---
+# "Bring your own Pulsar" (src_galaxy_byoc_pulsar, issue #6): galaxy-byoc-sync
+# (files/byoc/galaxy_byoc_sync.py, run by a systemd timer) turns the users' byoc_pulsar
+# preferences into RabbitMQ users/vhosts and job_conf.yml runners/environments.
+
+# src_galaxy_byoc_pulsar_max: at most this many BYOC endpoints (first come by Galaxy user id).
+_galaxy_byoc_pulsar_max_raw: >-
+  {{ ((src_galaxy_byoc_pulsar_max if src_galaxy_byoc_pulsar_max is defined and src_galaxy_byoc_pulsar_max is not none
+       else '') | string | trim) or '20' }}
+# Empty if src_galaxy_byoc_pulsar_max is usable, otherwise the reason (asserted in tasks/set_config.yml).
+_galaxy_byoc_pulsar_max_error: >-
+  {%- if _galaxy_byoc_pulsar_max_raw is not match('^[0-9]+$') -%}
+    src_galaxy_byoc_pulsar_max must be a whole number >= 0, got '{{ _galaxy_byoc_pulsar_max_raw }}'.
+  {%- endif -%}
+_galaxy_byoc_pulsar_max: "{{ _galaxy_byoc_pulsar_max_raw | int }}"
+
+# How often the sync runs; Galaxy is restarted at most once per interval.
+_galaxy_byoc_sync_interval_minutes: 15
+_galaxy_byoc_sync_unit: galaxy-byoc-sync
+_galaxy_byoc_sync_script: /usr/local/sbin/galaxy-byoc-sync
+# Root-only: config.json (no secrets, but paths and commands run as root).
+_galaxy_byoc_sync_config_dir: /etc/galaxy-byoc-sync
+# Root-only: state.json (password hashes of the BYOC RabbitMQ users, last restart).
+_galaxy_byoc_sync_state_dir: /var/lib/galaxy-byoc-sync
+# Staging directory the users' Pulsars must use (their app.yml staging_directory).
+_galaxy_byoc_jobs_directory: /mnt/pulsar/files/staging
+
+# With BYOC on, Ansible renders templates/galaxy/config/job_conf.yml.j2 to this file and
+# galaxy-byoc-sync writes job_config_file (what Galaxy reads) = this file + the BYOC part.
+_galaxy_job_conf_base: "{{ galaxy_config_dir }}/job_conf_base.yml"
+
+# templates/byoc/config.json.j2; the keys are galaxy_byoc_sync.SETTINGS.
+_galaxy_byoc_sync_settings:
+  rabbitmqctl: /usr/sbin/rabbitmqctl
+  node: "{{ _galaxy_rabbitmq_node }}"
+  galaxy_password_file: "{{ _galaxy_rabbitmq_secrets_dir }}/galaxy.pass"
+  amqp_local_port: "{{ _galaxy_rabbitmq_local_port }}"
+  base_job_config: "{{ _galaxy_job_conf_base }}"
+  job_config: "{{ job_config_file }}"
+  job_config_group: "{{ galaxy_group }}"
+  state_file: "{{ _galaxy_byoc_sync_state_dir }}/state.json"
+  max_endpoints: "{{ _galaxy_byoc_pulsar_max }}"
+  # A little under one interval, so that timer jitter does not skip a due restart.
+  min_restart_seconds: "{{ _galaxy_byoc_sync_interval_minutes * 60 - 60 }}"
+  restart_command: [/usr/local/bin/galaxyctl, graceful]
+  # Read-only session (see QUERY in the script) as the galaxy database role (peer authentication).
+  database_command:
+    - /usr/sbin/runuser
+    - -u
+    - "{{ galaxy_user }}"
+    - --
+    - /usr/bin/psql
+    - -X
+    - -q
+    - -A
+    - -t
+    - -v
+    - ON_ERROR_STOP=1
+    - -h
+    - /var/run/postgresql
+    - -d
+    - galaxy
+  # Same runner and environment settings as the AMQP Pulsars of src_galaxy_pulsar_amqp_configs.
+  runner:
+    galaxy_url: "{{ _galaxy_infrastructure_url }}"
+    manager: _default_
+    amqp_acknowledge: true
+    amqp_ack_republish_time: 1200
+    amqp_consumer_timeout: 2.0
+    amqp_publish_retry: true
+    amqp_publish_retry_max_retries: 60
+  environment:
+    jobs_directory: "{{ _galaxy_byoc_jobs_directory }}"
+    default_file_action: remote_transfer
+    dependency_resolution: remote
+    rewrite_parameters: true
+    remote_metadata: false
+    outputs_to_working_directory: false

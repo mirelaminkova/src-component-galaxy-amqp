@@ -51,6 +51,8 @@ When at least one Pulsar destination is configured (`src_galaxy_pulsar_configs`)
 
 Remote Pulsar servers can also be connected over a message queue (`src_galaxy_pulsar_amqp_configs`, Galaxy's `PulsarMQJobRunner`), so that the Pulsar server needs no inbound port; see [Pulsar over AMQP](#pulsar-over-amqp). These destinations appear in the same select.
 
+With `src_galaxy_byoc_pulsar: true`, users can also connect a Pulsar server of their own; see [Bring your own Pulsar](#bring-your-own-pulsar).
+
 ### Usability of external storage
 
 If you attach additional networked storage to the workspace, you can set `src_galaxy_storage_path` to a path on that storage volume. If your storage is e.g. called "galaxy storage", set the parameter to: `/data/galaxy_storage/datadir`. In theory, this should allow you to re-use datasets, tools, etc. from previous Galaxy workspaces.
@@ -74,7 +76,8 @@ The component takes the following parameters:
 * `src_galaxy_enable_tus`: Boolean. If true, enable support for performant and resumable uploads using [tusd](https://training.galaxyproject.org/training-material/topics/admin/tutorials/tus/tutorial.html).
 * `src_galaxy_cvmfs`: Boolean. If true, loads references data from [CVMFS](https://training.galaxyproject.org/training-material/topics/admin/tutorials/cvmfs/tutorial.html).
 * `src_galaxy_brand`: String. Brand name to display in the Galaxy webinterface.
-* `src_galaxy_byoc_pulsar`: Boolean (default: `false`). **Experimental.** Show the "Bring your own Pulsar" form (RabbitMQ username/password, maximum cores and memory, minimum/maximum GPUs) in the user preferences. The values are only stored for now; nothing uses them yet.
+* `src_galaxy_byoc_pulsar`: Boolean (default: `false`). **Experimental.** "Bring your own Pulsar": users enter a RabbitMQ username and password in their preferences and get their own Pulsar endpoint on Galaxy's RabbitMQ, usable only for their own jobs. Requires `src_galaxy_rabbitmq: true` (the playbook fails otherwise). See [Bring your own Pulsar](#bring-your-own-pulsar).
+* `src_galaxy_byoc_pulsar_max`: Integer (default: `20`). At most this many BYOC endpoints; further users are skipped (first come by Galaxy user id). `0` disables all endpoints.
 * `src_galaxy_rabbitmq`: Boolean (default: `false`). Install a RabbitMQ message broker on the Galaxy host, so remote Pulsar servers can connect to Galaxy over AMQPS. See [RabbitMQ](#rabbitmq-for-remote-pulsar-servers).
 * `src_galaxy_rabbitmq_port`: Integer (default: `5671`). TCP port of the AMQPS listener. Open it in the workspace's security group. Must be 1–65535 and not `5672`, `4369`, `25672`, `80`, `443` or `8080`; the playbook fails otherwise.
 * `src_galaxy_pulsar_amqp_configs`: String (default: empty). Remote Pulsar servers that connect to Galaxy's RabbitMQ, in the same format as `src_galaxy_pulsar_configs`, e.g. `[{name: hpc, label: Our HPC cluster, docker_enabled: true}]`. Requires `src_galaxy_rabbitmq: true`. See [Pulsar over AMQP](#pulsar-over-amqp) for the keys.
@@ -201,6 +204,45 @@ amqp_publish_retry_max_retries: 60
 ```
 
 Removing an entry removes its runner, environment and select option, but not its RabbitMQ user, vhost or files in `/etc/galaxy-rabbitmq/`; delete those by hand (`rabbitmqctl delete_user <name>`, `rabbitmqctl delete_vhost /pulsar/<name>`). `job_conf.yml` holds the `galaxy` RabbitMQ password and is deployed `0640` (group `galaxy`), like `galaxy.yml`.
+
+### Bring your own Pulsar
+
+With `src_galaxy_byoc_pulsar: true` (and `src_galaxy_rabbitmq: true`), every user can connect a Pulsar server they run themselves, for their own jobs only.
+
+**For users** (User → Preferences → Manage information):
+
+1. Under **Bring your own Pulsar**, choose a RabbitMQ username (3–32 characters from `a-z 0-9 _ -`) and a password (10–128 letters and digits only), and save. The resource fields are optional; if given they must be numbers ≥ 0 (whole numbers for cores and GPUs, minimum GPUs ≤ maximum GPUs). They are checked but not used for scheduling yet.
+2. Wait up to 15 minutes: Galaxy creates your endpoint at its next sync. If the username is already taken by another user, the entry is invalid, or the maximum number of endpoints is reached, no endpoint is created; ask the administrators (the reason is in the sync log).
+3. Configure your Pulsar server (it needs the `kombu` Python package, outbound access to the Galaxy host on the RabbitMQ port, and to Galaxy's HTTPS URL, from which it fetches inputs and to which it uploads outputs). In its `app.yml`:
+
+   ```yaml
+   message_queue_url: "pyamqp://byoc_<username>:<password>@<galaxy host>:<port>//pulsar/byoc_<username>?ssl=1"
+   staging_directory: /mnt/pulsar/files/staging
+   managers:
+     _default_:
+       type: queued_python
+       num_concurrent_jobs: 1
+   amqp_acknowledge: true
+   amqp_ack_republish_time: 1200
+   amqp_publish_retry: true
+   amqp_publish_retry_max_retries: 60
+   ```
+
+   `<galaxy host>` is the host name in your Galaxy URL (the workspace FQDN) and `<port>` is `src_galaxy_rabbitmq_port` (default `5671`); the preferences form shows the exact URL for this Galaxy. Note the `byoc_` prefix in the user and vhost names and the `//` before `pulsar`.
+4. Under **Use distributed compute resources**, select **My own Pulsar**. Your jobs then run on your Pulsar, except those that always stay on Galaxy (uploads, data sources, data managers, interactive and Galaxy-internal tools; see [Connecting to Pulsar](#connecting-to-pulsar)). While your endpoint does not exist yet (or no longer), your jobs use the default destination.
+
+Changing the password updates the RabbitMQ user at the next sync. Clearing the username and password (or entering invalid values) deletes the endpoint.
+
+**How it works** ([files/byoc/galaxy_byoc_sync.py](files/byoc/galaxy_byoc_sync.py), [tasks/byoc_pulsar.yml](tasks/byoc_pulsar.yml)): the playbook installs `/usr/local/sbin/galaxy-byoc-sync` and a systemd timer `galaxy-byoc-sync.timer` that runs it every 15 minutes as root (and once during the playbook run, before Galaxy starts). Each run:
+
+* reads the `byoc_pulsar|*` values from the users' extra preferences in the Galaxy database, as the `galaxy` database role over the PostgreSQL unix socket (`runuser -u galaxy -- psql`) in a read-only session. Deleted, purged and deactivated users are ignored. Galaxy stores the form's `secret` password field in plain text in the database (it only hides it from the browser);
+* validates the values as above; invalid entries are skipped and logged without the password. A username claimed by several users goes to the lowest Galaxy user id; at most `src_galaxy_byoc_pulsar_max` endpoints exist, again by user id;
+* reconciles RabbitMQ with `rabbitmqctl`: vhost `/pulsar/byoc_<username>`, user `byoc_<username>` with permissions on that vhost only, and the `galaxy` user on it too. `byoc_*` users and `/pulsar/byoc_*` vhosts without a valid preference are deleted; users and vhosts not starting with `byoc_` are never touched (static AMQP Pulsar names therefore must not start with `byoc_`). Passwords go to `rabbitmqctl` on stdin only. A salted PBKDF2 hash of each password is kept in `/var/lib/galaxy-byoc-sync/state.json` (root-only) to detect changes;
+* writes `job_conf.yml` as the base config the playbook renders (`job_conf_base.yml`, from [templates/galaxy/config/job_conf.yml.j2](templates/galaxy/config/job_conf.yml.j2)) plus, per endpoint, a runner `pulsar_mq_byoc_<username>` (`PulsarMQJobRunner`, same settings as for [Pulsar over AMQP](#pulsar-over-amqp)) and an environment `byoc_<username>` with `byoc_owner_id: <Galaxy user id>`. The file is replaced atomically (`0640`, group `galaxy`) and Galaxy is restarted gracefully (`galaxyctl graceful`) only when its content changed, at most once per timer interval (a later run catches up). A deleted endpoint's vhost is kept until Galaxy has been restarted, since Galaxy consumes it until then.
+
+**Routing**: the `default_dispatcher` job rule sends a job to `byoc_<username>` only when the job's owner selected **My own Pulsar** *and* the environment's `byoc_owner_id` is the owner's Galaxy user id, so another user who types the same username, or a stale preference, never reaches someone else's Pulsar. BYOC environments are not in the select's list of shared destinations, and the playbook fails if `src_galaxy_pulsar_tool_mappings` targets a `byoc_*` environment.
+
+**Administration**: `systemctl start galaxy-byoc-sync.service` runs a sync now; `journalctl -u galaxy-byoc-sync.service` shows what it did and why entries were skipped. Switching `src_galaxy_byoc_pulsar` off stops the timer and lets the playbook write `job_conf.yml` itself again, but keeps the `byoc_*` RabbitMQ users and vhosts; remove them with `rabbitmqctl delete_user byoc_<username>` and `rabbitmqctl delete_vhost /pulsar/byoc_<username>`.
 
 ## Maintenance
 

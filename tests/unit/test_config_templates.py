@@ -22,6 +22,10 @@ BASE_VARS = {
     "_galaxy_remote_destinations": [],
     "_galaxy_byoc_pulsar": False,
     "_galaxy_pulsar_amqp_configs": [],
+    "_galaxy_server_fqdn": "galaxy.example.org",
+    "_galaxy_rabbitmq_port": 5671,
+    "_galaxy_byoc_jobs_directory": "/mnt/pulsar/files/staging",
+    "_galaxy_byoc_sync_interval_minutes": 15,
 }
 
 REMOTE_DESTINATIONS = [{"id": "remote_byoc_basic", "label": "BYOC 'cluster': \"GPU\""}]

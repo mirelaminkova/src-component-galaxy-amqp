@@ -33,6 +33,30 @@
     fail_msg: "src_galaxy_pulsar_amqp_configs needs src_galaxy_rabbitmq: true (the Pulsars connect to Galaxy's RabbitMQ)."
     quiet: true
 
+- name: Load BYOC Pulsar variables
+  ansible.builtin.include_vars: vars/byoc_vars.yml
+
+- name: BYOC Pulsar requires RabbitMQ
+  ansible.builtin.assert:
+    that: _galaxy_rabbitmq or not _galaxy_byoc_pulsar
+    fail_msg: "src_galaxy_byoc_pulsar needs src_galaxy_rabbitmq: true (the users' Pulsars connect to Galaxy's RabbitMQ)."
+    quiet: true
+
+- name: Validate src_galaxy_byoc_pulsar_max
+  ansible.builtin.assert:
+    that: not _galaxy_byoc_pulsar_max_error
+    fail_msg: "{{ _galaxy_byoc_pulsar_max_error | default('', true) }}"
+    quiet: true
+
+# A BYOC environment may only ever run its owner's jobs (default_dispatcher checks the owner).
+- name: Tool mappings must not target BYOC environments
+  ansible.builtin.assert:
+    that: >-
+      _galaxy_pulsar_tool_mappings | selectattr('environment', 'defined') | map(attribute='environment')
+      | map('string') | select('match', 'byoc_') | list | length == 0
+    fail_msg: "src_galaxy_pulsar_tool_mappings must not use byoc_* environments (they belong to single users)."
+    quiet: true
+
 - name: Set admins from CO group
   ansible.builtin.set_fact:
     _galaxy_admins: >-
