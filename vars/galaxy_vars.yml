@@ -46,8 +46,9 @@ galaxy_dependency_resolvers:
 galaxy_config_templates:
   - src: templates/galaxy/config/user_preferences_extra_conf.yml.j2
     dest: "{{ user_preference_config_file }}"
+  # With BYOC Pulsar, galaxy-byoc-sync writes job_config_file from this base (vars/byoc_vars.yml).
   - src: templates/galaxy/config/job_conf.yml.j2
-    dest: "{{ job_config_file }}"
+    dest: "{{ _galaxy_byoc_pulsar | ternary(_galaxy_job_conf_base, job_config_file) }}"
   - src: templates/galaxy/config/pulsar_app.yml.j2
     dest: "{{ pulsar_config_file }}"
   - src: templates/galaxy/config/container_resolvers_conf.yml.j2

@@ -7,7 +7,9 @@ src_galaxy_interactive_tools: 'false'
 workspace_fqdn: set_to_your_fqdn
 src_galaxy_cvmfs: 'true'
 src_galaxy_jobs_default: singularity
+# Users' own Pulsars ("bring your own Pulsar", needs src_galaxy_rabbitmq: 'true') and their maximum number.
 src_galaxy_byoc_pulsar: 'false'
+src_galaxy_byoc_pulsar_max: '20'
 src_galaxy_rabbitmq: 'false'
 # Remote Pulsars over AMQP (needs src_galaxy_rabbitmq: 'true'), same format as src_galaxy_pulsar_configs, e.g.
 # src_galaxy_pulsar_amqp_configs: "[{name: hpc, label: Our HPC cluster, docker_enabled: true}]"

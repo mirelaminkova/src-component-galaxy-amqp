@@ -74,6 +74,7 @@ _galaxy_remote_destinations: >-
   {%- endfor -%}
   {{ ns.destinations }}
 # Route jobs through the default_dispatcher rule when there is anything to dispatch.
-_galaxy_use_dispatcher: "{{ _galaxy_use_interactive_tools or (_galaxy_remote_destinations | length > 0) }}"
-# Experimental "bring your own Pulsar" preference form (backend: issue #6).
+_galaxy_use_dispatcher: >-
+  {{ _galaxy_use_interactive_tools or (_galaxy_remote_destinations | length > 0) or _galaxy_byoc_pulsar }}
+# "Bring your own Pulsar": preference form, galaxy-byoc-sync and routing (issue #6, vars/byoc_vars.yml).
 _galaxy_byoc_pulsar: "{{ src_galaxy_byoc_pulsar | default(false, true) | bool }}"

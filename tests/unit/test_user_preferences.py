@@ -10,6 +10,10 @@ BASE_VARS = {
     "_galaxy_ibridges_enabled": True,
     "_galaxy_remote_destinations": [],
     "_galaxy_byoc_pulsar": False,
+    "_galaxy_server_fqdn": "galaxy.example.org",
+    "_galaxy_rabbitmq_port": 5671,
+    "_galaxy_byoc_jobs_directory": "/mnt/pulsar/files/staging",
+    "_galaxy_byoc_sync_interval_minutes": 15,
 }
 REMOTES = [
     {"id": "remote_hpc_basic", "label": "HPC cluster"},
@@ -84,5 +88,6 @@ def test_irods_block_is_kept_and_gated_by_ibridges(remotes, byoc):
 
     assert [i["name"] for i in on["irods_config"]["inputs"]] == ["username", "password", "env"]
     assert "irods_config" not in off
-    assert ("distributed_compute" in on) is bool(remotes)
+    # With BYOC the select offers "My own Pulsar" even without configured remotes.
+    assert ("distributed_compute" in on) is (bool(remotes) or byoc)
     assert ("byoc_pulsar" in on) is byoc

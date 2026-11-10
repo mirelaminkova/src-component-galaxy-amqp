@@ -1,0 +1,12 @@
+# Managed by the src-component-galaxy playbook; local changes are overwritten.
+[Unit]
+Description=Provision bring-your-own Pulsar endpoints from Galaxy user preferences
+After=network.target postgresql.service rabbitmq-server.service
+
+[Service]
+Type=oneshot
+ExecStart={{ _galaxy_byoc_sync_script }} --config {{ _galaxy_byoc_sync_config_dir }}/config.json
+UMask=0077
+PrivateTmp=true
+ProtectHome=true
+TimeoutStartSec=30min

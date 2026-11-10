@@ -105,6 +105,16 @@
       when: _galaxy_use_dispatcher
       notify: restart galaxy
 
+    # After the galaxyproject.galaxy role (Galaxy database, job_conf_base.yml) and before
+    # Galaxy is started: galaxy-byoc-sync writes job_conf.yml.
+    - name: Bring your own Pulsar (sync user preferences to RabbitMQ and job_conf.yml)
+      ansible.builtin.include_tasks: tasks/byoc_pulsar.yml
+      when: _galaxy_byoc_pulsar
+
+    - name: Stop the BYOC Pulsar sync when it is switched off
+      ansible.builtin.include_tasks: tasks/byoc_pulsar_off.yml
+      when: not _galaxy_byoc_pulsar
+
     - name: Add nginx user to galaxy group
       ansible.builtin.user:
         name: www-data

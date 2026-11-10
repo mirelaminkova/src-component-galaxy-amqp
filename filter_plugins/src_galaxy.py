@@ -63,6 +63,8 @@ _JOBS_DIRECTORY = re.compile(r"/\S*")
 # Passwords end up verbatim in amqp_url / message_queue_url, so only URL-unreserved characters.
 _PASSWORD = re.compile(r"[A-Za-z0-9._~-]{12,}")
 _RESERVED_NAMES = ("galaxy", "guest")  # existing RabbitMQ users
+# RabbitMQ users/vhosts named byoc_* belong to galaxy-byoc-sync, which deletes unknown ones.
+_RESERVED_PREFIX = "byoc_"
 _BOOLEANS = {True: True, False: False, "true": True, "false": False}
 _DEPENDENCY_RESOLUTION = ("none", "local", "remote")
 
@@ -79,6 +81,8 @@ def _entry_errors(entry, names):
         return ["'name' must be at most 64 characters"]
     if name in _RESERVED_NAMES:
         return [f"'name' must not be '{name}' (an existing RabbitMQ user)"]
+    if name.startswith(_RESERVED_PREFIX):
+        return [f"'name' must not start with '{_RESERVED_PREFIX}' (reserved for BYOC Pulsars)"]
     if name in names:
         return [f"duplicate name '{name}'"]
     names.add(name)

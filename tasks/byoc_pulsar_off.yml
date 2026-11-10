@@ -1,0 +1,16 @@
+---
+# src_galaxy_byoc_pulsar is off: stop galaxy-byoc-sync if an earlier run installed it.
+# job_conf.yml is rendered by Ansible again; BYOC RabbitMQ users and vhosts are left in place
+# (Galaxy no longer uses them; see the README to remove them).
+
+- name: Check for the galaxy-byoc-sync timer
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ _galaxy_byoc_sync_unit }}.timer"
+  register: _galaxy_byoc_timer
+
+- name: Stop and disable the galaxy-byoc-sync timer
+  ansible.builtin.systemd_service:
+    name: "{{ _galaxy_byoc_sync_unit }}.timer"
+    enabled: false
+    state: stopped
+  when: _galaxy_byoc_timer.stat.exists
