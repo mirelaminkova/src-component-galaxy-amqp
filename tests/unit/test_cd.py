@@ -22,7 +22,7 @@ from filter_plugins.src_galaxy import src_cd_params
 from tests.helpers.ansible_vars import REPO_ROOT, resolve_vars
 from tests.helpers.render import render_template
 
-VARS_FILES = ["internal_vars.yml", "src_galaxy_vars.yml", "cd_vars.yml"]
+VARS_FILES = ["internal_vars.yml", "src_galaxy_vars.yml", "byoc_onboarding_vars.yml", "cd_vars.yml"]
 CD_TASKS = REPO_ROOT / "tasks" / "cd.yml"
 PLAYBOOK = REPO_ROOT / "galaxysrv.yml"
 DEFAULT_REPO = "https://github.com/mirelaminkova/src-component-galaxy-amqp.git"
@@ -757,6 +757,25 @@ def test_every_task_touching_onboarding_files_runs_in_cd():
             missing.append(task.get("name"))
 
     assert missing == []
+
+
+def test_byoc_onboarding_files_and_secrets_load_in_cd():
+    tasks = {task.get("name"): tags for task, tags in _playbook_tasks()}
+
+    loads = (
+        "Load group_vars/mq.yml, templates/galaxy/config/job_conf.yml and "
+        "files/galaxy/config/user_preferences_extra_conf.yml"
+    )
+    assert _runs_in_cd(tasks[loads])
+    assert _runs_in_cd(tasks["Decrypt secret_group_vars/*.yml"])
+    assert _runs_in_cd(tasks["Define the BYOC secret variables"])
+
+
+def test_cd_uses_the_vault_password_file_of_the_onboarding_tasks():
+    resolve = _resolve()
+
+    assert resolve("_galaxy_cd_vault_password_file") == resolve("_galaxy_vault_secret_path")
+    assert resolve("_galaxy_cd_vault_password_file") == VAULT_PASSWORD_FILE
 
 
 def test_rabbitmq_users_and_vhosts_run_in_cd():
