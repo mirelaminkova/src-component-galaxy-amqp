@@ -1,4 +1,4 @@
-ansible-core>=2.19
+ansible-core>=2.22.0
 molecule
 molecule-plugins
 jmespath~=1.0
