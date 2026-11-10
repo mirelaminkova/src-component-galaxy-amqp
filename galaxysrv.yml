@@ -3,12 +3,21 @@
   hosts: "{{ lookup('env', 'variable_host') | default('localhost', true) }}" # workaround because SRC needs localhost, but molecule needs specifc hostvars
 
   pre_tasks:
+    # Tagged always: CD runs (tasks/cd.yml, --tags _galaxy_cd_tags) need the variables and the
+    # CO admin facts (galaxy.yml admin_users) too.
     - name: Set workspace user facts
       ansible.builtin.include_role:
         name: uusrc.general.fact_regular_users
+        apply:
+          tags: [always]
+      tags: [always]
 
     - name: Include config tasks and load variables
-      ansible.builtin.include_tasks: tasks/set_config.yml
+      ansible.builtin.include_tasks:
+        file: tasks/set_config.yml
+        apply:
+          tags: [always]
+      tags: [always]
 
     # The EU-layout BYOC onboarding files: group_vars/mq.yml, secret_group_vars/*.yml (Vault),
     # templates/galaxy/config/job_conf.yml and files/galaxy/config/user_preferences_extra_conf.yml.
@@ -44,7 +53,11 @@
     # (_galaxy_rabbitmq_passwords) for the AMQP Pulsar runners, and the broker should be up
     # before Galaxy starts.
     - name: Install RabbitMQ for remote Pulsar servers (AMQPS)
-      ansible.builtin.include_tasks: tasks/rabbitmq.yml
+      ansible.builtin.include_tasks:
+        file: tasks/rabbitmq.yml
+        apply:
+          tags: [rabbitmq]
+      tags: [rabbitmq]
       when: _galaxy_rabbitmq
 
   roles:
@@ -169,6 +182,12 @@
             regexp: ".*bootstrap_admin_api_key:"
             state: absent
           notify: galaxy gravity restart
+
+  post_tasks:
+    # Last, so the timer never starts before the deployment is done. Untagged: not part of CD runs.
+    - name: Set up continuous deployment (ansible-pull timer)
+      ansible.builtin.include_tasks: tasks/cd.yml
+      when: _galaxy_cd
 
   handlers:
     - name: Restart nginx

@@ -238,12 +238,15 @@ def test_galaxy_user_may_only_connect_from_loopback():
 
 def test_rabbitmq_runs_before_the_galaxy_role_renders_job_conf():
     [play] = yaml.safe_load((REPO_ROOT / "galaxysrv.yml").read_text())
-    pre_tasks = [task.get("ansible.builtin.include_tasks") for task in play["pre_tasks"]]
+
+    def included(task):
+        include = task.get("ansible.builtin.include_tasks")
+        return include.get("file") if isinstance(include, dict) else include
+
+    pre_tasks = [included(task) for task in play["pre_tasks"]]
 
     assert "tasks/rabbitmq.yml" in pre_tasks
-    assert all(
-        task.get("ansible.builtin.include_tasks") != "tasks/rabbitmq.yml" for task in play["tasks"]
-    )
+    assert all(included(task) != "tasks/rabbitmq.yml" for task in play["tasks"])
     rabbitmq = play["pre_tasks"][pre_tasks.index("tasks/rabbitmq.yml")]
     assert rabbitmq["when"] == "_galaxy_rabbitmq"
 

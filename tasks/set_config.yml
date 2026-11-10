@@ -24,6 +24,16 @@
 - name: Load BYOC onboarding variables
   ansible.builtin.include_vars: vars/byoc_onboarding_vars.yml
 
+- name: Load continuous deployment variables
+  ansible.builtin.include_vars: vars/cd_vars.yml
+
+- name: Validate the continuous deployment parameters
+  ansible.builtin.assert:
+    that: _galaxy_cd_errors | length == 0
+    fail_msg: "Invalid continuous deployment parameters: {{ _galaxy_cd_errors | join(' ') }}"
+    quiet: true
+  when: _galaxy_cd
+
 - name: Validate src_galaxy_pulsar_amqp_configs
   ansible.builtin.assert:
     that: _galaxy_pulsar_amqp_config_errors | length == 0
@@ -63,10 +73,22 @@
   ansible.builtin.set_fact:
     _galaxy_bootstrap_api_key: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=50) }}"
 
-- name: Generate a remote user secret
+# Keep the secret of an existing deployment: CD runs (vars/cd_vars.yml) re-render galaxy.yml but
+# not the nginx config, which holds the same secret.
+- name: Read the deployed Galaxy config (to keep its remote user secret)
+  ansible.builtin.slurp:
+    src: "{{ _galaxy_root }}/config/galaxy.yml"
+  register: _galaxy_deployed_config
+  failed_when: false
+  no_log: true
+
+- name: Generate a remote user secret, or keep the deployed one
   when: not _molecule_idempotence
   ansible.builtin.set_fact:
-    _galaxy_remote_user_secret: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=50) }}"
+    _galaxy_remote_user_secret: >-
+      {{ (((_galaxy_deployed_config.content | default('') | b64decode | from_yaml) or {}).galaxy | default({})).remote_user_secret
+         | default(lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=50), true) }}
+  no_log: true
 
 - name: Load nginx variables
   ansible.builtin.include_vars: vars/nginx_vars.yml
