@@ -63,6 +63,8 @@ If you attach additional networked storage to the workspace, you can set `src_ga
 
 ## ResearchCloud parameters
 
+The playbook runs its modules with the workspace's system Python (`ansible_python_interpreter: /usr/bin/python3`), not SRC's Ansible venv, which `become_user` tasks cannot execute; module dependencies are installed with apt.
+
 The component takes the following parameters:
 
 * `src_galaxy_version`: String. Galaxy release to install, e.g. `26.1` (default) or `26.0`; deploys the `release_<version>` branch.
