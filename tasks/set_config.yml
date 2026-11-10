@@ -33,6 +33,12 @@
     fail_msg: "src_galaxy_pulsar_amqp_configs needs src_galaxy_rabbitmq: true (the Pulsars connect to Galaxy's RabbitMQ)."
     quiet: true
 
+- name: Validate the Pulsar destinations and tool mappings for TPV
+  ansible.builtin.assert:
+    that: _galaxy_tpv_config_errors | length == 0
+    fail_msg: "Invalid Pulsar configuration: {{ _galaxy_tpv_config_errors | join('; ') }}"
+    quiet: true
+
 - name: Set admins from CO group
   ansible.builtin.set_fact:
     _galaxy_admins: >-

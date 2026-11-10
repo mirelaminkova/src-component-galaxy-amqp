@@ -2,9 +2,9 @@
 
 The variables are templated with ansible-core's ``Templar`` (as the playbook would,
 starting from the ResearchCloud string parameters), so Ansible's conversion of
-rendered text into native types is part of what is tested. The remote destination
-ids are compared with the environments job_conf.yml.j2 writes, so the ids users can
-pick always name a real job environment.
+rendered text into native types is part of what is tested. The remote destinations
+are compared with the TPV destinations files/galaxy/tpv/destinations.yml.j2 writes, so
+the tags users can pick always select a real destination.
 """
 
 import pytest
@@ -60,19 +60,27 @@ def test_pulsar_without_tool_mappings_has_an_empty_mapping_list():
     [
         (
             "[{url: https://pulsar.example.org/, private_token: t}]",
-            {"id": "remote_pulsar-example-org-_basic", "label": "pulsar.example.org"},
+            {
+                "id": "remote_pulsar-example-org-_basic",
+                "label": "pulsar.example.org",
+                "tag": "pulsar-example-org--pulsar",
+            },
         ),
         (
             "[{url: http://10.0.0.5:8913, private_token: t}]",
-            {"id": "remote_10-0-0-5:8913_basic", "label": "10.0.0.5"},
+            {
+                "id": "remote_10-0-0-5:8913_basic",
+                "label": "10.0.0.5",
+                "tag": "10-0-0-5:8913-pulsar",
+            },
         ),
         (
             "[{name: hpc, url: https://hpc.example.org/pulsar, private_token: t}]",
-            {"id": "remote_hpc_basic", "label": "hpc.example.org"},
+            {"id": "remote_hpc_basic", "label": "hpc.example.org", "tag": "hpc-pulsar"},
         ),
         (
             "[{name: hpc, label: Our HPC cluster, url: https://h.example.org, private_token: t}]",
-            {"id": "remote_hpc_basic", "label": "Our HPC cluster"},
+            {"id": "remote_hpc_basic", "label": "Our HPC cluster", "tag": "hpc-pulsar"},
         ),
     ],
 )
@@ -80,54 +88,103 @@ def test_destination_id_and_label(config, expected):
     assert _destinations(config) == [expected]
 
 
-def test_every_destination_id_is_a_job_conf_environment():
-    evaluate = _ansible_vars(
-        src_galaxy_pulsar_configs=(
-            "[{url: https://pulsar.example.org/, private_token: t},"
-            " {url: http://10.0.0.5:8913, private_token: t},"
-            " {name: hpc, url: https://hpc.example.org, private_token: t, docker_enabled: true}]"
-        )
-    )
-    job_conf = render_yaml(
-        "galaxy/config/job_conf.yml.j2",
+THREE_CONFIGS = (
+    "[{url: https://pulsar.example.org/, private_token: t},"
+    " {url: http://10.0.0.5:8913, private_token: t},"
+    " {name: hpc, url: https://hpc.example.org, private_token: t, docker_enabled: true}]"
+)
+
+
+def test_every_remote_destination_is_a_tpv_destination_with_its_tag():
+    evaluate = _ansible_vars(src_galaxy_pulsar_configs=THREE_CONFIGS)
+    destinations = render_yaml(
+        "files/galaxy/tpv/destinations.yml.j2",
         {
+            "_galaxy_tpv_config_dir": "/srv/galaxy/config/tpv",
             "galaxy_mutable_data_dir": "/srv/galaxy/datadir",
             "apptainer_volumes": [],
             "_galaxy_use_interactive_tools": False,
-            "_galaxy_use_dispatcher": evaluate("_galaxy_use_dispatcher"),
-            "_galaxy_default_dispatcher": "default_dispatcher",
             "_galaxy_jobs_default": "singularity",
-            "_galaxy_has_pulsar": evaluate("_galaxy_has_pulsar"),
             "_galaxy_pulsar_configs_raw": evaluate("_galaxy_pulsar_configs_raw"),
-            "_galaxy_pulsar_tool_mappings": evaluate("_galaxy_pulsar_tool_mappings"),
-            "_galaxy_pulsar_amqp_configs": evaluate("_galaxy_pulsar_amqp_configs"),
+            "_galaxy_pulsar_amqp_configs": [],
         },
-    )
-    environments = job_conf["execution"]["environments"]
-    ids = [d["id"] for d in evaluate("_galaxy_remote_destinations")]
+    )["destinations"]
+    remotes = evaluate("_galaxy_remote_destinations")
 
-    assert len(ids) == 3
-    assert all(environments[i]["runner"] == "pulsar" for i in ids)
-    assert job_conf["execution"]["default"] == "default_dispatcher"
+    assert len(remotes) == 3
+    for remote in remotes:
+        assert destinations[remote["id"]]["runner"] == "pulsar"
+        assert destinations[remote["id"]]["scheduling"] == {"require": [remote["tag"]]}
+    assert destinations["remote_hpc"]["scheduling"] == {"require": ["hpc-pulsar-docker"]}
+
+
+def test_destination_tags_for_tool_mappings():
+    evaluate = _ansible_vars(src_galaxy_pulsar_configs=THREE_CONFIGS)
+
+    assert evaluate("_galaxy_tpv_destination_tags") == {
+        "local": "local",
+        "docker": "docker",
+        "singularity": "singularity",
+        "remote_pulsar-example-org-_basic": "pulsar-example-org--pulsar",
+        "remote_10-0-0-5:8913_basic": "10-0-0-5:8913-pulsar",
+        "remote_hpc_basic": "hpc-pulsar",
+        "remote_hpc": "hpc-pulsar-docker",
+    }
+
+
+def test_tool_mappings_get_their_destination_tag():
+    evaluate = _ansible_vars(
+        src_galaxy_pulsar_configs=ONE_CONFIG,
+        src_galaxy_pulsar_tool_mappings=(
+            "[{tool_id: bwa, environment: remote_hpc_basic}, {tool_id: cat1, environment: docker}]"
+        ),
+    )
+
+    assert evaluate("_galaxy_tpv_tool_mappings") == [
+        {"tool_id": "bwa", "environment": "remote_hpc_basic", "tag": "hpc-pulsar"},
+        {"tool_id": "cat1", "environment": "docker", "tag": "docker"},
+    ]
+    assert evaluate("_galaxy_tpv_config_errors") == []
+
+
+@pytest.mark.parametrize("configs", ["", ONE_CONFIG])
+def test_valid_configs_have_no_tpv_errors(configs):
+    assert _ansible_vars(src_galaxy_pulsar_configs=configs)("_galaxy_tpv_config_errors") == []
+
+
+def test_tool_mappings_without_a_remote_pulsar_are_ignored():
+    evaluate = _ansible_vars(src_galaxy_pulsar_tool_mappings="[{tool_id: bwa, environment: nope}]")
+
+    assert evaluate("_galaxy_tpv_tool_mappings") == []
+    assert evaluate("_galaxy_tpv_config_errors") == []
 
 
 @pytest.mark.parametrize(
-    ("interactive", "configs", "expected"),
+    ("mappings", "error"),
     [
-        ("false", "", False),
-        ("true", "", True),
-        ("false", ONE_CONFIG, True),
-        ("true", ONE_CONFIG, True),
+        (
+            "[{tool_id: bwa, environment: remote_gone_basic}]",
+            'src_galaxy_pulsar_tool_mappings: bwa maps to unknown environment "remote_gone_basic"'
+            " (known: local, docker, singularity, remote_hpc_basic)",
+        ),
+        (
+            "[{tool_id: bwa}]",
+            'src_galaxy_pulsar_tool_mappings: bwa maps to unknown environment ""'
+            " (known: local, docker, singularity, remote_hpc_basic)",
+        ),
+        (
+            "[{environment: docker}]",
+            'src_galaxy_pulsar_tool_mappings entry {"environment": "docker"} has no tool_id',
+        ),
     ],
 )
-def test_dispatcher_is_used_for_interactive_tools_or_remote_destinations(
-    interactive, configs, expected
-):
+def test_invalid_tool_mappings_are_reported_and_skipped(mappings, error):
     evaluate = _ansible_vars(
-        src_galaxy_interactive_tools=interactive, src_galaxy_pulsar_configs=configs
+        src_galaxy_pulsar_configs=ONE_CONFIG, src_galaxy_pulsar_tool_mappings=mappings
     )
 
-    assert evaluate("_galaxy_use_dispatcher") is expected
+    assert evaluate("_galaxy_tpv_config_errors") == [error]
+    assert evaluate("_galaxy_tpv_tool_mappings") == []
 
 
 @pytest.mark.parametrize(

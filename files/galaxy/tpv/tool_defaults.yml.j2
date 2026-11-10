@@ -1,0 +1,86 @@
+---
+# TPV (total-perspective-vortex) tool defaults and routing rules.
+# Managed by Ansible (files/galaxy/tpv/tool_defaults.yml.j2), rendered to
+# {{ _galaxy_tpv_config_dir }}/tool_defaults.yml; local changes are overwritten.
+#
+# Same layout and tag conventions as usegalaxy.eu's infrastructure-playbook:
+# tags use dashes (-), destinations use underscores (_). Destinations and their
+# tags are in destinations.yml.j2.
+#
+# Routing, first match wins:
+#   1. src_galaxy_pulsar_tool_mappings  -> require the mapped destination's tag
+#   2. interactive tools                -> require `docker`
+#   3. tools that must run next to Galaxy (data sources, upload, data fetch,
+#      set metadata, data managers, expression and user-defined tools)
+#                                       -> require `internal` (the default destination)
+#   4. a logged-in user's "Use distributed compute resources" choice
+#      (`<name>-pulsar`)                -> require that tag
+#   5. everything else                  -> the default destination ({{ _galaxy_jobs_default }})
+#
+# A choice that no destination offers (a removed or unknown Pulsar) fails the job with
+# a message telling the user to pick another one. When this Galaxy has no Pulsar
+# destinations at all the choice is ignored: the preference form is not shown then,
+# so users could not change it.
+global:
+  default_inherits: default
+
+tools:
+  default:
+    abstract: true
+    cores: 1
+    mem: 3.8
+    gpus: 0
+{# Lower-cased tool ids pinned by src_galaxy_pulsar_tool_mappings, as a Python expression. #}
+{% set pinned = 'set(' ~ (_galaxy_tpv_tool_mappings | map(attribute='tool_id') | map('lower') | list | to_json) ~ ')' %}
+    rules:  # executed in order
+{% for mapping in _galaxy_tpv_tool_mappings %}
+      - id: tool_mapping_{{ loop.index }}
+        if: |
+          {{ mapping.tool_id | lower | to_json }} in [i.lower() for i in tool.all_ids]
+        scheduling:
+          require:
+            - {{ mapping.tag | to_json }}
+{% endfor %}
+
+      - id: interactive_tool
+        if: tool.tool_type == "interactive" and not {{ pinned }}.intersection(i.lower() for i in tool.all_ids)
+        scheduling:
+          require:
+            - docker
+
+      - id: tool_requires_galaxy
+        if: |
+          # Tools that need Galaxy's own environment, database or files.
+          not {{ pinned }}.intersection(i.lower() for i in tool.all_ids) and tool.tool_type != "interactive" and (
+              tool.old_id in ("upload1", "__DATA_FETCH__")
+              or tool.tool_type in ("data_source", "data_source_async", "expression", "manage_data", "user_defined")
+              or bool(tool.tool_type_local)
+              or bool(tool.requires_galaxy_python_environment)
+          )
+        scheduling:
+          require:
+            - internal
+
+      - id: remote_resources
+        # Only jobs nothing above has placed yet (mapped, interactive, internal) may go remote.
+        if: user is not None and not any(tag.tag_type.name == "REQUIRE" for tag in entity.tpv_tags.tags)
+        execute: |
+          from galaxy.jobs.mapper import JobMappingException
+          from tpv.core.entities import SchedulingTags
+
+          # The preferences API stores any JSON value; only a string can name a tag.
+          choice = user.extra_preferences.get("distributed_compute|remote_resources") if user is not None else None
+          offered = {
+              tag.value
+              for destination in mapper.destinations.values()
+              for tag in destination.tpv_dest_tags.tags
+              if tag.value.endswith("-pulsar")
+          }
+          if isinstance(choice, str) and choice not in ("", "None") and offered:
+              if choice not in offered:
+                  raise JobMappingException(
+                      f"The remote resource '{choice}' selected under 'User -> Preferences -> Manage"
+                      " Information -> Use distributed compute resources' is not available (anymore)."
+                      " Please select 'default' or another remote resource, click 'Save' and rerun your job."
+                  )
+              entity.tpv_tags = entity.tpv_tags.combine(SchedulingTags(require=[choice]))
