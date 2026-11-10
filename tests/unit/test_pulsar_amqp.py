@@ -13,7 +13,12 @@ from ansible.errors import AnsibleError
 from tests.helpers.ansible_vars import REPO_ROOT, resolve_vars
 from tests.helpers.render import render_template, render_yaml
 
-VARS_FILES = ["internal_vars.yml", "src_galaxy_vars.yml", "rabbitmq_vars.yml"]
+VARS_FILES = [
+    "internal_vars.yml",
+    "src_galaxy_vars.yml",
+    "rabbitmq_vars.yml",
+    "byoc_onboarding_vars.yml",
+]
 TWO = "[{name: hpc, label: Our HPC, docker_enabled: true}, {name: eu, password: Abcdefghijkl1234}]"
 GALAXY_PW = "GalaxyPw0123456789"
 HPC_PW = "HpcPassw0rd123456"
@@ -267,6 +272,7 @@ JOB_CONF_NAMES = [
     "_galaxy_pulsar_amqp_configs",
     "_galaxy_rabbitmq_local_port",
     "_galaxy_infrastructure_url",
+    "_galaxy_byoc_runners",
 ]
 
 
@@ -400,6 +406,7 @@ def test_every_amqp_destination_is_a_tpv_destination_and_its_tag_in_the_dropdown
             "_galaxy_ibridges_enabled": False,
             "_galaxy_byoc_pulsar": False,
             "_galaxy_remote_destinations": destinations,
+            "_galaxy_byoc_preference_options": [],
         },
     )
     options = prefs["preferences"]["distributed_compute"]["inputs"][0]["options"]

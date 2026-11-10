@@ -31,7 +31,12 @@ from tpv.rules import gateway
 from tests.helpers.ansible_vars import resolve_vars
 from tests.helpers.render import render_template
 
-VARS_FILES = ["internal_vars.yml", "src_galaxy_vars.yml", "rabbitmq_vars.yml"]
+VARS_FILES = [
+    "internal_vars.yml",
+    "src_galaxy_vars.yml",
+    "rabbitmq_vars.yml",
+    "byoc_onboarding_vars.yml",
+]
 PREF_KEY = "distributed_compute|remote_resources"
 TPV_FILES = ["tool_defaults", "destinations"]
 
@@ -72,6 +77,7 @@ def _variables(params, config_dir):
         "_galaxy_tpv_config_errors",
         "_galaxy_rabbitmq_local_port",
         "_galaxy_infrastructure_url",
+        "_galaxy_byoc_runners",
     ]
     return {
         **{name: resolve(name) for name in names},
@@ -457,7 +463,12 @@ def test_onboarding_destination_gets_no_other_jobs(route_factory):
 
 def test_onboarding_section_is_marked_and_last(tmp_path):
     destinations = Path(_render(tmp_path, WITH_PULSARS)[1]).read_text()
-    marker = destinations.index("# BYOC ONBOARDING DESTINATIONS")
+    marker = destinations.index("# BYOC onboarding destinations")
+    anchor = destinations.index("# LOCAL CONDOR DESTINATIONS #")
 
     assert "pulsar_default:" in destinations[:marker]
-    assert all(line.lstrip().startswith("#") for line in destinations[marker:].splitlines())
+    assert marker < anchor
+    assert all(
+        not line.strip() or line.lstrip().startswith("#")
+        for line in destinations[marker:].splitlines()
+    )

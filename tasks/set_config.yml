@@ -21,6 +21,9 @@
 - name: Load RabbitMQ variables
   ansible.builtin.include_vars: vars/rabbitmq_vars.yml
 
+- name: Load BYOC onboarding variables
+  ansible.builtin.include_vars: vars/byoc_onboarding_vars.yml
+
 - name: Validate src_galaxy_pulsar_amqp_configs
   ansible.builtin.assert:
     that: _galaxy_pulsar_amqp_config_errors | length == 0

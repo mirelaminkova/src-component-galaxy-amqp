@@ -1,0 +1,3 @@
+  - user: galaxy_eosc01
+    password: '{{ rabbitmq_password_galaxy_eosc01 }}'
+    vhost: /pulsar/galaxy_eosc01

@@ -16,7 +16,10 @@ preferences:
               required: True
               type: text
 {% endif %}
-{% if _galaxy_remote_destinations | length > 0 %}
+{% set generated_tags = _galaxy_remote_destinations | map(attribute='tag') | list %}
+{# Options from the EU-layout files/galaxy/config/user_preferences_extra_conf.yml (BYOC onboarding). #}
+{% set byoc_options = _galaxy_byoc_preference_options | rejectattr(1, 'in', generated_tags) | list %}
+{% if _galaxy_remote_destinations | length > 0 or byoc_options | length > 0 %}
     # Read by the TPV rule `remote_resources` (files/galaxy/tpv/tool_defaults.yml.j2) as
     # "distributed_compute|remote_resources"; the values are TPV scheduling tags (`<name>-pulsar`).
     distributed_compute:
@@ -31,13 +34,17 @@ preferences:
 {% for destination in _galaxy_remote_destinations %}
                   - {{ [destination.label, destination.tag] | to_json }}
 {% endfor %}
+{% for option in byoc_options %}
+                  - {{ option | to_json }}
+{% endfor %}
 {% endif %}
 {% if _galaxy_byoc_pulsar %}
     byoc_pulsar:
         description: >
             Bring your own Pulsar endpoint to Galaxy. You can add here your Pulsar credentials and specifications.
-            This is an experimental feature: the values are stored, but Galaxy does not schedule jobs to your Pulsar yet.
-            Contact the administrators if you want to learn more about it.
+            Once the administrators have reviewed and merged your endpoint, Galaxy's job scheduling systems will take your Pulsar into account {{ _galaxy_byoc_schedule_delay }}
+            and schedule appropriate jobs to your compute resources; you can then pick it under "Use distributed compute resources".
+            This is an experimental feature. Contact the administrators if you want to learn more about it.
         inputs:
             - name: username
               label: RabbitMQ custom username (e.g. mypulsarendpoint).
@@ -45,7 +52,7 @@ preferences:
               required: False
             - name: password
               label: RabbitMQ custom alphanumerical password, at least 10 characters long (e.g. MyPulS4rP4ssw0rd).
-              type: secret
+              type: password
               required: False
             - name: max_accepted_cores
               label: Maximum number of CPU cores available.

@@ -1,0 +1,126 @@
+---
+# EU-layout BYOC onboarding files (issue #21; README "Onboarding a BYOC Pulsar via PR").
+# SRC runs the playbook with `-i localhost,`, so group_vars/ and secret_group_vars/ are never
+# picked up through the inventory; they are loaded here, explicitly.
+#
+# SRC also runs ansible-playbook without --vault-password-file. The Vault password comes from
+# the secret component parameter src_galaxy_vault_password instead: it is written to
+# _galaxy_vault_secret_path (root:root 0600, also used by the CD job of issue #22), and
+# secret_group_vars/*.yml are decrypted with `ansible-vault view` into facts.
+# Decryption runs on the managed host and reads the files from the playbook directory, which is
+# the same machine on SRC (the playbook runs on the workspace itself).
+
+- name: Write the Ansible Vault password
+  when: _galaxy_vault_password | length > 0
+  block:
+    - name: Create /etc/galaxy
+      ansible.builtin.file:
+        path: "{{ _galaxy_vault_secret_path | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write the Vault password file
+      ansible.builtin.copy:
+        dest: "{{ _galaxy_vault_secret_path }}"
+        content: "{{ _galaxy_vault_password }}\n"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+# Without RabbitMQ there is no broker for BYOC Pulsars: the onboarding files are ignored.
+- name: Load the BYOC onboarding files
+  when: _galaxy_rabbitmq
+  block:
+    - name: Load group_vars/mq.yml, templates/galaxy/config/job_conf.yml and files/galaxy/config/user_preferences_extra_conf.yml
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/{{ item.file }}"
+        name: "{{ item.name }}"
+      loop:
+        - { file: group_vars/mq.yml, name: _galaxy_onboarding_mq }
+        - { file: templates/galaxy/config/job_conf.yml, name: _galaxy_onboarding_jobconf }
+        - { file: files/galaxy/config/user_preferences_extra_conf.yml, name: _galaxy_onboarding_preferences }
+      loop_control:
+        label: "{{ item.file }}"
+
+    - name: Find secret_group_vars/*.yml
+      ansible.builtin.set_fact:
+        _galaxy_byoc_secret_files: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/secret_group_vars/*.yml') | sort }}"
+
+    # CD runs (issue #22) do not pass src_galaxy_vault_password; they use the file it was written
+    # to by the SRC deployment.
+    - name: Check for the Vault password file
+      ansible.builtin.stat:
+        path: "{{ _galaxy_vault_secret_path }}"
+      register: _galaxy_vault_secret_stat
+      when: _galaxy_byoc_secret_files | length > 0
+
+    - name: Require the Vault password for secret_group_vars
+      ansible.builtin.assert:
+        that: >-
+          _galaxy_byoc_secret_files | length == 0 or _galaxy_vault_password | length > 0
+          or _galaxy_vault_secret_stat.stat.exists
+        fail_msg: >-
+          secret_group_vars/ holds Ansible Vault files ({{ _galaxy_byoc_secret_files | map('basename') | join(', ') }}),
+          but the component parameter src_galaxy_vault_password is empty and {{ _galaxy_vault_secret_path }} does not exist.
+        quiet: true
+
+    # Decrypted in memory: the plaintext is only in the registered stdout (no_log), never on disk.
+    - name: Decrypt secret_group_vars/*.yml
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -m
+          - ansible.cli.vault
+          - view
+          - --vault-password-file
+          - "{{ _galaxy_vault_secret_path }}"
+          - "{{ item }}"
+      loop: "{{ _galaxy_byoc_secret_files }}"
+      loop_control:
+        label: "{{ item | basename }}"
+      register: _galaxy_byoc_decrypted
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    # Only file names and return codes: no_log above hides everything else.
+    - name: Check that every secret_group_vars file was decrypted
+      ansible.builtin.assert:
+        that: _galaxy_byoc_decrypted.results | rejectattr('rc', 'equalto', 0) | list | length == 0
+        fail_msg: >-
+          Could not decrypt {{ _galaxy_byoc_decrypted.results | rejectattr('rc', 'equalto', 0)
+          | map(attribute='item') | map('basename') | join(', ') }} in secret_group_vars/ with the Vault password
+          (src_galaxy_vault_password, written to {{ _galaxy_vault_secret_path }}): the password is wrong
+          or the file is not an Ansible Vault file.
+        quiet: true
+
+    - name: Collect the BYOC secrets
+      ansible.builtin.set_fact:
+        _galaxy_byoc_secrets: >-
+          {{ _galaxy_byoc_decrypted.results | map(attribute='stdout') | map('from_yaml')
+             | map('default', {}, true) | list | ansible.builtin.combine }}
+      no_log: true
+
+    - name: Validate the BYOC secrets
+      ansible.builtin.assert:
+        that: _galaxy_byoc_secrets | byoc_secret_errors(_galaxy_byoc_mq_users) | length == 0
+        fail_msg: "{{ _galaxy_byoc_secrets | byoc_secret_errors(_galaxy_byoc_mq_users) | join('; ') }}"
+        quiet: true
+
+    # group_vars/mq.yml refers to them as {{ rabbitmq_password_galaxy_<id> }}.
+    - name: Define the BYOC secret variables
+      ansible.builtin.set_fact:
+        "{{ item.key }}": "{{ item.value }}"
+      loop: "{{ _galaxy_byoc_secrets | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      no_log: true
+
+    - name: Validate the BYOC onboarding files
+      ansible.builtin.assert:
+        that: _galaxy_byoc_onboarding_errors | length == 0
+        fail_msg: "Invalid BYOC onboarding files: {{ _galaxy_byoc_onboarding_errors | join('; ') }}"
+        quiet: true

@@ -1,0 +1,51 @@
+---
+# EU-layout BYOC onboarding files (issue #21; README "Onboarding a BYOC Pulsar via PR").
+# tasks/byoc_onboarding.yml loads them into the three variables below when src_galaxy_rabbitmq
+# is on, and the secret_group_vars/*.yml variables (rabbitmq_password_galaxy_<id>) as facts.
+# Until then (and with RabbitMQ off) they are empty.
+_galaxy_onboarding_mq: {}  # group_vars/mq.yml
+_galaxy_onboarding_jobconf: {}  # templates/galaxy/config/job_conf.yml
+_galaxy_onboarding_preferences: {}  # files/galaxy/config/user_preferences_extra_conf.yml
+
+# rabbitmq_users entries {user: galaxy_<id>, password, vhost: /pulsar/galaxy_<id>};
+# vars/rabbitmq_vars.yml adds them to the RabbitMQ users and vhosts.
+_galaxy_byoc_mq_users: "{{ _galaxy_onboarding_mq.rabbitmq_users | default([], true) }}"
+# galaxy_jobconf.plugins entries {id: pulsar_eu_<id>, load, params}, as in the file.
+_galaxy_byoc_runners_raw: "{{ (_galaxy_onboarding_jobconf.galaxy_jobconf | default({}, true)).plugins | default([], true) }}"
+# The same runners pointed at this Galaxy (amqp_url copied from usegalaxy.eu rebuilt with this
+# host's RabbitMQ, galaxy_url = this Galaxy); job_conf.yml.j2 adds them as runners. Only valid
+# after the check in tasks/byoc_onboarding.yml.
+_galaxy_byoc_runners: >-
+  {{ _galaxy_byoc_runners_raw | byoc_runners(_galaxy_byoc_amqp_endpoints[0], _galaxy_infrastructure_url,
+                                             _galaxy_byoc_amqp_endpoints) }}
+# remote_resources options [label, tag] without the default; added to the user preferences.
+_galaxy_byoc_preference_options: "{{ _galaxy_onboarding_preferences | byoc_preference_options }}"
+
+# Where a BYOC runner's amqp_url may point: the AMQPS listener under the workspace name, or
+# the plain loopback listener; other hosts (e.g. usegalaxy.eu's) are replaced by the first.
+_galaxy_byoc_amqp_endpoints:
+  - "{{ _galaxy_server_fqdn }}:{{ _galaxy_rabbitmq_port }}"
+  - "127.0.0.1:{{ _galaxy_rabbitmq_local_port }}"
+# RabbitMQ users the onboarding files must not take over.
+_galaxy_byoc_reserved_users: "{{ ['galaxy', 'guest'] + _galaxy_pulsar_amqp_configs | map(attribute='name') | list }}"
+# Problems in the loaded files (asserted in tasks/byoc_onboarding.yml); never contains passwords.
+_galaxy_byoc_onboarding_errors: >-
+  {{ _galaxy_byoc_mq_users | byoc_onboarding_errors(
+       _galaxy_byoc_runners_raw, _galaxy_byoc_preference_options,
+       resolved=true, reserved=_galaxy_byoc_reserved_users) }}
+
+# When an onboarded endpoint starts getting jobs, for the byoc_pulsar form's description:
+# with continuous deployment (src_galaxy_cd, issue #22) one src_galaxy_cd_interval (minutes or
+# a systemd time span, default 15) after the merge, otherwise at the next deployment.
+_galaxy_byoc_schedule_delay: >-
+  {%- set interval = src_galaxy_cd_interval | default('15', true) | string | trim -%}
+  {%- if src_galaxy_cd | default(false, true) | bool -%}
+    within about {{ interval }}{{ ' minutes' if interval is match('^[0-9]+$') else '' }}
+  {%- else -%}
+    after the next deployment of this Galaxy
+  {%- endif -%}
+
+# src_galaxy_vault_password (secret component parameter): the Ansible Vault password of
+# secret_group_vars/*.yml, written to _galaxy_vault_secret_path (root:root 0600).
+_galaxy_vault_password: "{{ src_galaxy_vault_password | default('', true) }}"
+_galaxy_vault_secret_path: /etc/galaxy/vault_password

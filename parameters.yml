@@ -12,3 +12,6 @@ src_galaxy_rabbitmq: 'false'
 # Remote Pulsars over AMQP (needs src_galaxy_rabbitmq: 'true'), same format as src_galaxy_pulsar_configs, e.g.
 # src_galaxy_pulsar_amqp_configs: "[{name: hpc, label: Our HPC cluster, docker_enabled: true}]"
 src_galaxy_pulsar_amqp_configs: ''
+# Secret parameter: Ansible Vault password of secret_group_vars/*.yml (BYOC onboarding, issue #21).
+# Needed only when secret_group_vars/ holds files and src_galaxy_rabbitmq is 'true'.
+src_galaxy_vault_password: ''

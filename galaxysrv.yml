@@ -10,6 +10,17 @@
     - name: Include config tasks and load variables
       ansible.builtin.include_tasks: tasks/set_config.yml
 
+    # The EU-layout BYOC onboarding files: group_vars/mq.yml, secret_group_vars/*.yml (Vault),
+    # templates/galaxy/config/job_conf.yml and files/galaxy/config/user_preferences_extra_conf.yml.
+    # Loaded explicitly: SRC runs the playbook with `-i localhost,`, which skips group_vars/.
+    # Tagged always: the CD job (issue #22) runs only some tags but needs these variables.
+    - name: Load the BYOC onboarding files and secrets
+      ansible.builtin.include_tasks:
+        file: tasks/byoc_onboarding.yml
+        apply:
+          tags: always
+      tags: always
+
     - name: Install Dependencies
       ansible.builtin.apt:
         update_cache: true
