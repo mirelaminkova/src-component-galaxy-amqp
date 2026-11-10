@@ -74,11 +74,12 @@ def test_byoc_pulsar_form_when_enabled():
         "max_accepted_mem",
         "min_accepted_gpus",
         "max_accepted_gpus",
+        "nfs_path",
     ]
     assert inputs["username"]["type"] == "text"
     # Same type as usegalaxy.eu (see test_byoc_pulsar_form_matches_usegalaxy_eu).
     assert inputs["password"]["type"] == "password"
-    assert all(inputs[n]["type"] == "number" for n in list(inputs)[2:])
+    assert all(inputs[n]["type"] == "number" for n in list(inputs)[2:6])
     assert not any(i["required"] for i in inputs.values())
 
 
@@ -124,11 +125,35 @@ EU_BYOC_PULSAR_INPUTS = [
 
 
 def test_byoc_pulsar_form_matches_usegalaxy_eu():
+    """EU's six fields come first and unchanged; only `nfs_path` (#36) follows them."""
     prefs = _prefs(_galaxy_byoc_pulsar=True)
     inputs = prefs["byoc_pulsar"]["inputs"]
+    eu = len(EU_BYOC_PULSAR_INPUTS)
 
-    assert [(i["name"], i["type"], i["label"]) for i in inputs] == EU_BYOC_PULSAR_INPUTS
+    assert [(i["name"], i["type"], i["label"]) for i in inputs[:eu]] == EU_BYOC_PULSAR_INPUTS
+    assert [i["name"] for i in inputs[eu:]] == ["nfs_path"]
     assert all(i["required"] is False for i in inputs)
+
+
+NFS_PATH_LABEL = (
+    "Path of the NFS share your Pulsar uses for staging, persisted data and the container "
+    "cache (e.g. /data/share)."
+)
+
+
+@pytest.mark.parametrize("byoc", [False, True])
+def test_byoc_pulsar_nfs_path_is_last_input(byoc):
+    prefs = _prefs(_galaxy_byoc_pulsar=byoc, _galaxy_remote_destinations=REMOTES)
+    names = [i["name"] for form in prefs.values() for i in form["inputs"]]
+
+    assert ("nfs_path" in names) is byoc
+    if byoc:
+        assert prefs["byoc_pulsar"]["inputs"][-1] == {
+            "name": "nfs_path",
+            "label": NFS_PATH_LABEL,
+            "type": "text",
+            "required": False,
+        }
 
 
 BYOC_OPTIONS = [
