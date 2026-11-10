@@ -12,3 +12,33 @@
         name: ansible
         version: 9.4.0
         state: present
+
+    - name: Install tools used by verify.yml
+      ansible.builtin.apt:
+        name:
+          - iproute2
+          - openssl
+        state: present
+
+    # Stand-in for the certificate the SRC Nginx plugin (acme.sh) provides on a real workspace.
+    - name: Create directory for the self-signed test certificate
+      ansible.builtin.file:
+        path: /etc/ssl/acme/localhost
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Create self-signed test certificate like the SRC Nginx plugin's
+      ansible.builtin.command:
+        cmd: >-
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=localhost
+          -keyout /etc/ssl/acme/localhost/key.pem -out /etc/ssl/acme/localhost/fullchain.pem
+        creates: /etc/ssl/acme/localhost/fullchain.pem
+
+    - name: Restrict the test key like the original
+      ansible.builtin.file:
+        path: /etc/ssl/acme/localhost/key.pem
+        owner: root
+        group: root
+        mode: "0600"

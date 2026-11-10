@@ -1,0 +1,249 @@
+---
+# Optional RabbitMQ broker (src_galaxy_rabbitmq) so remote Pulsar servers can reach Galaxy over AMQPS.
+# Uses Ubuntu's rabbitmq-server package: plain AMQP on 127.0.0.1 only, AMQPS on src_galaxy_rabbitmq_port
+# with the certificate of the SRC Nginx plugin, no guest user, no management plugin.
+
+- name: Validate src_galaxy_rabbitmq_port
+  ansible.builtin.assert:
+    that: not _galaxy_rabbitmq_port_error
+    fail_msg: "{{ _galaxy_rabbitmq_port_error | default('', true) }}"
+    quiet: true
+
+- name: Determine TLS certificate paths
+  ansible.builtin.include_tasks: tls_facts.yml
+
+- name: Check that the TLS certificate exists
+  ansible.builtin.stat:
+    path: "{{ _galaxy_tls_cert }}"
+  register: _galaxy_rabbitmq_cert
+
+- name: Require the certificate of the SRC Nginx plugin
+  ansible.builtin.assert:
+    that: _galaxy_rabbitmq_cert.stat.exists
+    fail_msg: "RabbitMQ (src_galaxy_rabbitmq) needs the SRC Nginx plugin certificate, but {{ _galaxy_tls_cert }} does not exist."
+    quiet: true
+
+# Everything RabbitMQ reads at its first start (config, TLS copy, epmd binding) is put in place
+# before the package is installed, so the broker never runs with Ubuntu's defaults (5672 on all interfaces).
+- name: Create the rabbitmq system group
+  ansible.builtin.group:
+    name: rabbitmq
+    system: true
+
+- name: Create the rabbitmq system user (as the package would)
+  ansible.builtin.user:
+    name: rabbitmq
+    group: rabbitmq
+    system: true
+    home: /var/lib/rabbitmq
+    create_home: false
+    shell: /usr/sbin/nologin
+    comment: RabbitMQ messaging server
+
+- name: Create RabbitMQ config directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: rabbitmq
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/rabbitmq, owner: rabbitmq, mode: "0755" } # ownership as set by the package
+    - { path: "{{ _galaxy_rabbitmq_tls_dir }}", owner: root, mode: "0750" }
+
+# Copies readable by the rabbitmq group; the original acme.sh/certbot files keep their permissions.
+# Renewed certificates are picked up the next time this playbook runs (RabbitMQ is then restarted).
+- name: Copy the TLS certificate and key for RabbitMQ
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ _galaxy_rabbitmq_tls_dir }}/{{ item.dest }}"
+    remote_src: true
+    owner: root
+    group: rabbitmq
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: "{{ _galaxy_tls_cert }}", dest: fullchain.pem, mode: "0644" }
+    - { src: "{{ _galaxy_tls_key }}", dest: key.pem, mode: "0640" }
+  register: _galaxy_rabbitmq_tls_copy
+
+- name: Configure RabbitMQ
+  ansible.builtin.template:
+    src: templates/rabbitmq/rabbitmq.conf.j2
+    dest: /etc/rabbitmq/rabbitmq.conf
+    owner: root
+    group: rabbitmq
+    mode: "0640"
+  register: _galaxy_rabbitmq_conf
+
+# epmd only listens on 127.0.0.1 (below), so the node must be named after the loopback host;
+# this also keeps the node's data directory independent of the workspace hostname.
+- name: Set the RabbitMQ node name
+  ansible.builtin.copy:
+    dest: /etc/rabbitmq/rabbitmq-env.conf
+    owner: root
+    group: rabbitmq
+    mode: "0644"
+    content: |
+      # Managed by the src-component-galaxy playbook; local changes are overwritten.
+      NODENAME={{ _galaxy_rabbitmq_node }}
+  register: _galaxy_rabbitmq_env
+
+- name: Create systemd drop-in directory for epmd.socket
+  ansible.builtin.file:
+    path: /etc/systemd/system/epmd.socket.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# The Erlang port mapper (used by rabbitmqctl) listens on all interfaces by default.
+- name: Bind epmd to the loopback interface only
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/epmd.socket.d/loopback.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the src-component-galaxy playbook.
+      [Socket]
+      ListenStream=
+      ListenStream=127.0.0.1:4369
+
+- name: Install RabbitMQ
+  ansible.builtin.apt:
+    name: rabbitmq-server
+    state: present
+
+# Compare the live socket rather than the drop-in's change status, so a run that failed after
+# writing the drop-in still rebinds epmd next time.
+- name: Get the address epmd listens on
+  ansible.builtin.systemd_service:
+    name: epmd.socket
+  register: _galaxy_rabbitmq_epmd_socket
+
+- name: Apply the epmd binding
+  when: _galaxy_rabbitmq_epmd_socket.status.Listen != '127.0.0.1:4369 (Stream)'
+  block:
+    - name: Stop RabbitMQ and epmd to rebind epmd
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - rabbitmq-server.service
+        - epmd.service
+        - epmd.socket
+
+    - name: Start epmd socket with the loopback binding
+      ansible.builtin.systemd_service:
+        name: epmd.socket
+        state: started
+        daemon_reload: true
+
+- name: Start RabbitMQ (restart on configuration or certificate change)
+  ansible.builtin.systemd_service:
+    name: rabbitmq-server.service
+    enabled: true
+    state: >-
+      {{ (_galaxy_rabbitmq_conf is changed or _galaxy_rabbitmq_env is changed or _galaxy_rabbitmq_tls_copy is changed)
+         | ternary('restarted', 'started') }}
+
+- name: Disable the management plugin
+  community.rabbitmq.rabbitmq_plugin:
+    names: rabbitmq_management
+    state: disabled
+
+- name: Remove the default guest user
+  community.rabbitmq.rabbitmq_user:
+    user: guest
+    node: "{{ _galaxy_rabbitmq_node }}"
+    state: absent
+
+- name: Create RabbitMQ vhosts
+  community.rabbitmq.rabbitmq_vhost:
+    name: "{{ item }}"
+    node: "{{ _galaxy_rabbitmq_node }}"
+    state: present
+  loop: "{{ _galaxy_rabbitmq_vhosts }}"
+
+- name: Create root-only directory for RabbitMQ passwords
+  ansible.builtin.file:
+    path: "{{ _galaxy_rabbitmq_secrets_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# Existing password files are kept, so re-runs are idempotent.
+- name: Generate passwords for new RabbitMQ users
+  ansible.builtin.copy:
+    dest: "{{ _galaxy_rabbitmq_secrets_dir }}/{{ item.name }}.pass"
+    content: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_letters', 'digits'], length=32) }}"
+    force: false
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ _galaxy_rabbitmq_users_resolved }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _galaxy_rabbitmq_password_files_written
+  no_log: true
+
+- name: Read RabbitMQ passwords
+  ansible.builtin.slurp:
+    src: "{{ _galaxy_rabbitmq_secrets_dir }}/{{ item.name }}.pass"
+  loop: "{{ _galaxy_rabbitmq_users_resolved }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _galaxy_rabbitmq_password_files
+  no_log: true
+
+# _galaxy_rabbitmq_passwords maps user name to password, e.g. for building amqp_url in the job config.
+- name: Collect RabbitMQ passwords
+  ansible.builtin.set_fact:
+    _galaxy_rabbitmq_passwords: >-
+      {{ dict(_galaxy_rabbitmq_password_files.results | map(attribute='item.name')
+              | zip(_galaxy_rabbitmq_password_files.results | map(attribute='content') | map('b64decode'))) }}
+  no_log: true
+
+- name: List existing RabbitMQ users
+  ansible.builtin.command:
+    argv: [rabbitmqctl, -n, "{{ _galaxy_rabbitmq_node }}", --quiet, list_users, --no-table-headers]
+  register: _galaxy_rabbitmq_user_list
+  changed_when: false
+
+- name: Note existing RabbitMQ users
+  ansible.builtin.set_fact:
+    _galaxy_rabbitmq_existing_users: "{{ _galaxy_rabbitmq_user_list.stdout_lines | map('split') | map('first') | list }}"
+
+# Passwords go to rabbitmqctl on stdin: its command line is readable by every local account
+# (ps, /proc/<pid>/cmdline), which no_log does not prevent. A password is only (re)set when the user
+# is missing or its .pass file was just written, so RabbitMQ is not re-checked against the file.
+- name: Set passwords of new RabbitMQ users and of users whose password file was (re)created
+  ansible.builtin.command:
+    argv:
+      - rabbitmqctl
+      - -n
+      - "{{ _galaxy_rabbitmq_node }}"
+      - --quiet
+      - "{{ (item.item.name in _galaxy_rabbitmq_existing_users) | ternary('change_password', 'add_user') }}"
+      - "{{ item.item.name }}"
+    stdin: "{{ _galaxy_rabbitmq_passwords[item.item.name] }}"
+  loop: "{{ _galaxy_rabbitmq_password_files_written.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item is changed or item.item.name not in _galaxy_rabbitmq_existing_users
+  changed_when: true
+  no_log: true
+
+# Tags and permissions only; passwords are set above.
+- name: Configure RabbitMQ user tags and permissions
+  community.rabbitmq.rabbitmq_user:
+    user: "{{ item.name }}"
+    node: "{{ _galaxy_rabbitmq_node }}"
+    tags: "{{ item.tags | default(omit, true) }}"
+    permissions: "{{ item.permissions }}"
+    state: present
+  loop: "{{ _galaxy_rabbitmq_users_resolved }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true

@@ -1,0 +1,46 @@
+---
+# Optional RabbitMQ broker on the Galaxy host (src_galaxy_rabbitmq), for Pulsar servers using AMQPS.
+
+# Node name; epmd (Erlang port mapper) only listens on 127.0.0.1, so the node is named after the loopback host.
+_galaxy_rabbitmq_node: rabbit@localhost
+
+# Root-only directory holding one generated password per RabbitMQ user (<name>.pass).
+_galaxy_rabbitmq_secrets_dir: /etc/galaxy-rabbitmq
+# Copy of the SRC Nginx plugin certificate and key that the rabbitmq group may read.
+_galaxy_rabbitmq_tls_dir: /etc/rabbitmq/tls
+# Plain AMQP, bound to 127.0.0.1 only (for Galaxy itself).
+_galaxy_rabbitmq_local_port: 5672
+# Ports that src_galaxy_rabbitmq_port must not take: the loopback AMQP listener, epmd, Erlang
+# distribution, and the ports Nginx/Galaxy use.
+_galaxy_rabbitmq_reserved_ports: [5672, 4369, 25672, 80, 443, 8080]
+# Empty if src_galaxy_rabbitmq_port is usable, otherwise the reason it is not (asserted in tasks/rabbitmq.yml).
+_galaxy_rabbitmq_port_error: >-
+  {%- set raw = src_galaxy_rabbitmq_port | default(5671, true) | string | trim -%}
+  {%- if raw is not match('^[0-9]+$') or raw | int < 1 or raw | int > 65535 -%}
+    src_galaxy_rabbitmq_port must be an integer from 1 to 65535, got '{{ raw }}'.
+  {%- elif raw | int in _galaxy_rabbitmq_reserved_ports -%}
+    src_galaxy_rabbitmq_port must not be one of {{ _galaxy_rabbitmq_reserved_ports | join(', ') }} (used by RabbitMQ itself, Nginx or Galaxy), got '{{ raw }}'.
+  {%- endif -%}
+_galaxy_rabbitmq_tls_versions:
+  - tlsv1.3
+  - tlsv1.2
+
+# Extension points for later features (AMQP Pulsar runner, BYOC sync):
+# append vhosts to _galaxy_rabbitmq_vhosts (the galaxy user gets full permissions on each),
+# and users as {name, vhosts: [...], tags: ''} to _galaxy_rabbitmq_users.
+_galaxy_rabbitmq_vhosts: []
+_galaxy_rabbitmq_users:
+  - name: galaxy
+    vhosts: "{{ _galaxy_rabbitmq_vhosts }}"
+
+# _galaxy_rabbitmq_users in the shape community.rabbitmq.rabbitmq_user expects.
+_galaxy_rabbitmq_users_resolved: >-
+  {%- set users = [] -%}
+  {%- for user in _galaxy_rabbitmq_users -%}
+    {%- set permissions = [] -%}
+    {%- for vhost in user.vhosts | default([]) -%}
+      {%- set _ = permissions.append({'vhost': vhost, 'configure_priv': '.*', 'read_priv': '.*', 'write_priv': '.*'}) -%}
+    {%- endfor -%}
+    {%- set _ = users.append({'name': user.name, 'tags': user.tags | default(''), 'permissions': permissions}) -%}
+  {%- endfor -%}
+  {{ users }}
