@@ -18,6 +18,8 @@ BASE_VARS = {
     "_galaxy_remote_destinations": [],
     "_galaxy_byoc_pulsar": False,
     "_galaxy_pulsar_amqp_configs": [],
+    "_galaxy_byoc_runners": [],
+    "_galaxy_byoc_preference_options": [],
 }
 
 REMOTE_DESTINATIONS = [
@@ -38,10 +40,22 @@ CASES = {
             "_galaxy_byoc_pulsar": True,
         },
         "only_byoc": {"_galaxy_ibridges_enabled": False, "_galaxy_byoc_pulsar": True},
+        "onboarded_options": {
+            "_galaxy_byoc_preference_options": [["EOSC EU Node 01", "eosc-eu-node-01-pulsar"]],
+        },
     },
     "job_conf.yml.j2": {
         "default": {},
         "rest_pulsar": {"_galaxy_has_pulsar": True},
+        "byoc_runner": {
+            "_galaxy_byoc_runners": [
+                {
+                    "id": "pulsar_eu_eosc01",
+                    "load": "galaxy.jobs.runners.pulsar:PulsarMQJobRunner",
+                    "params": {"amqp_url": "pyamqp://u:p@h:5671//pulsar/u?ssl=1", "manager": "x"},
+                }
+            ],
+        },
     },
 }
 

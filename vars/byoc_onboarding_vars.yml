@@ -1,0 +1,35 @@
+---
+# EU-layout BYOC onboarding files (issue #21; README "Onboarding a BYOC Pulsar via PR").
+# tasks/byoc_onboarding.yml loads them into the three variables below when src_galaxy_rabbitmq
+# is on, and the secret_group_vars/*.yml variables (rabbitmq_password_galaxy_<id>) as facts.
+# Until then (and with RabbitMQ off) they are empty.
+_galaxy_onboarding_mq: {}  # group_vars/mq.yml
+_galaxy_onboarding_jobconf: {}  # templates/galaxy/config/job_conf.yml
+_galaxy_onboarding_preferences: {}  # files/galaxy/config/user_preferences_extra_conf.yml
+
+# rabbitmq_users entries {user: galaxy_<id>, password, vhost: /pulsar/galaxy_<id>};
+# vars/rabbitmq_vars.yml adds them to the RabbitMQ users and vhosts.
+_galaxy_byoc_mq_users: "{{ _galaxy_onboarding_mq.rabbitmq_users | default([], true) }}"
+# galaxy_jobconf.plugins entries {id: pulsar_eu_<id>, load, params}; job_conf.yml.j2 adds them as runners.
+_galaxy_byoc_runners: "{{ (_galaxy_onboarding_jobconf.galaxy_jobconf | default({}, true)).plugins | default([], true) }}"
+# remote_resources options [label, tag] without the default; added to the user preferences.
+_galaxy_byoc_preference_options: "{{ _galaxy_onboarding_preferences | byoc_preference_options }}"
+
+# Where a BYOC runner's amqp_url may point: the AMQPS listener under the workspace name, or
+# the plain loopback listener.
+_galaxy_byoc_amqp_endpoints:
+  - "{{ _galaxy_server_fqdn }}:{{ _galaxy_rabbitmq_port }}"
+  - "127.0.0.1:{{ _galaxy_rabbitmq_local_port }}"
+# RabbitMQ users the onboarding files must not take over.
+_galaxy_byoc_reserved_users: "{{ ['galaxy', 'guest'] + _galaxy_pulsar_amqp_configs | map(attribute='name') | list }}"
+# Problems in the loaded files (asserted in tasks/byoc_onboarding.yml); never contains passwords.
+_galaxy_byoc_onboarding_errors: >-
+  {{ _galaxy_byoc_mq_users | byoc_onboarding_errors(
+       _galaxy_byoc_runners, _galaxy_byoc_preference_options,
+       endpoints=_galaxy_byoc_amqp_endpoints, galaxy_url=_galaxy_infrastructure_url,
+       reserved=_galaxy_byoc_reserved_users) }}
+
+# src_galaxy_vault_password (secret component parameter): the Ansible Vault password of
+# secret_group_vars/*.yml, written to _galaxy_vault_secret_path (root:root 0600).
+_galaxy_vault_password: "{{ src_galaxy_vault_password | default('', true) }}"
+_galaxy_vault_secret_path: /etc/galaxy/vault_password

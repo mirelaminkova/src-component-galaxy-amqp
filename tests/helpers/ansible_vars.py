@@ -31,16 +31,21 @@ def _trust(value):
     return value
 
 
-def resolve_vars(files: list[str], params: dict | None = None) -> Callable[[str], object]:
+def resolve_vars(
+    files: list[str], params: dict | None = None, templated: dict | None = None
+) -> Callable[[str], object]:
     """Load ``vars/<file>`` for each of ``files`` and return a variable resolver.
 
     ``params`` are the component parameters (or any variable to override); they
-    are plain data and are not templated themselves.
+    are plain data and are not templated themselves. ``templated`` are variables
+    read from repository files (e.g. by ``include_vars``), whose strings are
+    templates like those of ``vars/*.yml``.
     """
     loader = DataLoader()
     variables = dict(DEFAULT_CONTEXT)
     for name in files:
         variables.update(_trust(loader.load_from_file(str(VARS_DIR / name))))
+    variables.update(_trust(templated or {}))
     variables.update(params or {})
     templar = Templar(loader=loader, variables=variables)
 

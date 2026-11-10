@@ -7,6 +7,9 @@ ignore: |
   .venv/
   .ansible/
   molecule/_testfiles/
+  # Ansible Vault files (BYOC onboarding, issue #21): not YAML until decrypted.
+  secret_group_vars/
+  tests/fixtures/byoc_onboarding/base/secret_group_vars/
 
 rules:
   comments:

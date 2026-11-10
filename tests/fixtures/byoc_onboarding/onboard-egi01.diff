@@ -1,0 +1,62 @@
+diff --git a/files/galaxy/config/user_preferences_extra_conf.yml b/files/galaxy/config/user_preferences_extra_conf.yml
+index a0e4a3e..59a96b5 100644
+--- a/files/galaxy/config/user_preferences_extra_conf.yml
++++ b/files/galaxy/config/user_preferences_extra_conf.yml
+@@ -17,3 +17,4 @@ preferences:
+               options:
+                   - ["default - Galaxy will decide where to put your job", None]
+                   - ["Bratislava (Slovakia) - IISAS", sk-pulsar]
++                  - ["Bari (Italy) - INFN", egi-pulsar]
+diff --git a/group_vars/mq.yml b/group_vars/mq.yml
+index aa8ca66..001fc3a 100644
+--- a/group_vars/mq.yml
++++ b/group_vars/mq.yml
+@@ -16,3 +16,6 @@ rabbitmq_users:
+   - user: galaxy_sk01
+     password: "{{ rabbitmq_password_galaxy_sk01 }}"
+     vhost: /pulsar/galaxy_sk01
++  - user: galaxy_egi01
++    password: "{{ rabbitmq_password_galaxy_egi01 }}"
++    vhost: /pulsar/galaxy_egi01
+diff --git a/secret_group_vars/pulsar.yml b/secret_group_vars/pulsar.yml
+index d42ba25..c64eb7e 100644
+--- a/secret_group_vars/pulsar.yml
++++ b/secret_group_vars/pulsar.yml
+@@ -1,8 +1,11 @@
+ $ANSIBLE_VAULT;1.1;AES256
+-61336530633662643964623439663830643161613164363463346535663839306166343331616137
+-6134313532386133313437643031383931356464373063390a323331323938333434386163316538
+-38643330323261303538646130616431616331626530653563303263613832616432633232653061
+-3835326266333762380a383535393165326162326532613834373861343536663464643665623339
+-31363664633434366530663763616362323635306462313738653731383632336233633535333562
+-30336465303861396335363363323636343535663338653663316338383437396362666133336230
+-306361303136363934353939623235376233
++32343133353536666431323034396361653235633562656434326237346636393737656639393131
++6163323334616564383036333161633037383563373565650a666436626231643966303635303935
++39656566376136303732613136313962376662363536383733303961396436633439356637666333
++6162656564356661360a373963623061383537306133346535646630366530613261303930316336
++35633337653532396334663463383066393239643836353932616237396238613734376564353332
++61633534306564636162666336353839636661316365623031343637633161303664343831623239
++37643563666137366238613532376361613230393438616361346464353734393036626134323937
++33653566643363386530633839303862653637306437333635396162326430643837636133386635
++64313764626363616535656265313332336461326563646631353637373630363936323638346134
++6562393331353330343634633132353366646237383830373139
+diff --git a/templates/galaxy/config/job_conf.yml b/templates/galaxy/config/job_conf.yml
+index 94ad12b..09ee249 100644
+--- a/templates/galaxy/config/job_conf.yml
++++ b/templates/galaxy/config/job_conf.yml
+@@ -32,3 +32,14 @@ galaxy_jobconf:
+         amqp_consumer_timeout: 2.0
+         amqp_publish_retry: "true"
+         amqp_publish_retry_max_retries: 60
++    - id: pulsar_eu_egi01
++      load: galaxy.jobs.runners.pulsar:PulsarMQJobRunner
++      params:
++        amqp_url: "pyamqp://galaxy_egi01:{{ rabbitmq_password_galaxy_egi01 }}@galaxy.example.org:5671//pulsar/galaxy_egi01?ssl=1"
++        galaxy_url: "https://galaxy.example.org"
++        manager: production
++        amqp_acknowledge: "true"
++        amqp_ack_republish_time: 300
++        amqp_consumer_timeout: 2.0
++        amqp_publish_retry: "true"
++        amqp_publish_retry_max_retries: 60

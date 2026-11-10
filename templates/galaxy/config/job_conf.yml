@@ -1,0 +1,23 @@
+---
+# BYOC onboarding file in the usegalaxy.eu infrastructure-playbook layout (issue #21).
+# Not a template of its own: tasks/byoc_onboarding.yml loads it as variables and
+# templates/galaxy/config/job_conf.yml.j2 adds each plugin below as a runner of Galaxy's job
+# configuration. Only galaxy_jobconf.plugins is used, and only PulsarMQJobRunner entries:
+#
+#   - id: pulsar_eu_<id>
+#     load: galaxy.jobs.runners.pulsar:PulsarMQJobRunner
+#     params:
+#       amqp_url: "pyamqp://galaxy_<id>:{{ rabbitmq_password_galaxy_<id> }}@{{ _galaxy_server_fqdn }}:{{ _galaxy_rabbitmq_port }}//pulsar/galaxy_<id>?ssl=1"
+#       galaxy_url: "{{ _galaxy_infrastructure_url }}"
+#       manager: production
+#       amqp_acknowledge: "true"
+#       amqp_ack_republish_time: 300
+#       amqp_consumer_timeout: 2.0
+#       amqp_publish_retry: "true"
+#       amqp_publish_retry_max_retries: 60
+#
+# amqp_url must point at this Galaxy's RabbitMQ: the workspace name with src_galaxy_rabbitmq_port
+# (as above, or the literal name and port), or 127.0.0.1:5672 without ?ssl=1.
+# See README.md, "Onboarding a BYOC Pulsar via PR".
+galaxy_jobconf:
+  plugins: []

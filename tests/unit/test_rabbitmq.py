@@ -9,7 +9,12 @@ import yaml
 from tests.helpers.ansible_vars import REPO_ROOT, resolve_vars
 from tests.helpers.render import render_template
 
-VARS_FILES = ["internal_vars.yml", "src_galaxy_vars.yml", "rabbitmq_vars.yml"]
+VARS_FILES = [
+    "internal_vars.yml",
+    "src_galaxy_vars.yml",
+    "rabbitmq_vars.yml",
+    "byoc_onboarding_vars.yml",
+]
 TASKS_FILE = REPO_ROOT / "tasks" / "rabbitmq.yml"
 
 

@@ -1,0 +1,15 @@
+---
+# BYOC onboarding file in the usegalaxy.eu infrastructure-playbook layout (issue #21).
+# Not loaded through the inventory (SRC runs the playbook with `-i localhost,`):
+# tasks/byoc_onboarding.yml loads it explicitly when src_galaxy_rabbitmq is on.
+#
+# One entry per BYOC Pulsar <id> ([a-z0-9_]+). The playbook creates vhost /pulsar/galaxy_<id>
+# and user galaxy_<id> with permissions on that vhost only, gives the galaxy user permissions on
+# the vhost too, and sets the password (on rabbitmqctl's stdin) from secret_group_vars:
+#
+#   - user: galaxy_<id>
+#     password: "{{ rabbitmq_password_galaxy_<id> }}"
+#     vhost: /pulsar/galaxy_<id>
+#
+# See README.md, "Onboarding a BYOC Pulsar via PR".
+rabbitmq_users: []

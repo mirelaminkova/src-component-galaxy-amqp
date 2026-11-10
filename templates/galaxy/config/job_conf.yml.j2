@@ -21,6 +21,14 @@ runners:
     amqp_publish_retry: true
     amqp_publish_retry_max_retries: 60
 {% endfor %}
+{% for runner in _galaxy_byoc_runners %}
+  # BYOC Pulsar runner from templates/galaxy/config/job_conf.yml (EU layout, issue #21).
+  {{ runner.id }}:
+    load: {{ runner.load | to_json }}
+{% for key, value in runner.params.items() %}
+    {{ key }}: {{ value | to_json }}
+{% endfor %}
+{% endfor %}
 
 execution:
   # Every job is routed by TPV (total-perspective-vortex); the destinations and routing rules

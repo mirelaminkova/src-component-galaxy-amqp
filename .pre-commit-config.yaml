@@ -5,7 +5,7 @@
 # Versions of the local Python hooks match requirements-dev.txt; keep them in sync.
 default_install_hook_types: [pre-commit, pre-push]
 default_stages: [pre-commit]
-exclude: ^molecule/_testfiles/  # fixtures, kept byte-for-byte
+exclude: ^(molecule/_testfiles/|tests/fixtures/byoc_onboarding/)  # fixtures, kept byte-for-byte
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -73,7 +73,8 @@ repos:
           - galaxy-web-framework==26.0.2
           - galaxy-web-stack==26.0.2
           - fissix==24.4.24
-        files: ^(tests/|templates/|files/|vars/|filter_plugins/|pyproject\.toml$)
+        # Includes the BYOC onboarding files, so onboarding pull requests run the contract tests.
+        files: ^(tests/|templates/|vars/|tasks/|filter_plugins/|files/|group_vars/|secret_group_vars/|galaxysrv\.yml$|pyproject\.toml$)
         pass_filenames: false
 
       - id: ast-grep-test

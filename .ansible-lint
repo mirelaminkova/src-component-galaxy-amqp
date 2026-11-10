@@ -4,6 +4,9 @@ exclude_paths:
   - docs
   - .github
   - molecule/
+  # Ansible Vault files (no vault password when linting) and the onboarding test fixtures.
+  - secret_group_vars/
+  - tests/fixtures/
 skip_list:
   - role-name
   - var-naming
