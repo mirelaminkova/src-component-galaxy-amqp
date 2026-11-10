@@ -6,6 +6,7 @@ row in the "Component parameters" table of README.md, and every row must name a 
 the playbook reads, so the table cannot drift from the code.
 """
 
+import compileall
 import re
 
 from tests.helpers.ansible_vars import REPO_ROOT
@@ -21,14 +22,23 @@ PLAYBOOK_SOURCES = [
     "filter_plugins",
 ]
 HEADER = ["Parameter key", "(Initial) value", "Overwritable", "Required", "Description"]
-# A parameter name; `\b(?!\.)` skips file names such as vars/src_galaxy_vars.yml.
-PARAMETER = re.compile(r"\bsrc_(?:galaxy_[a-z0-9_]+|ibridges)\b(?!\.)")
+# Text sources only: bytecode (filter_plugins/__pycache__/*.pyc) decodes to names with
+# trailing marshal bytes, e.g. `src_galaxy_vault_passwordz`.
+TEXT_SUFFIXES = {".yml", ".yaml", ".j2", ".py", ".cfg", ".conf"}
+# A parameter name. `\b(?!\.(?:ya?ml|py|j2)\b)` skips file names such as
+# vars/src_galaxy_vars.yml but keeps attribute access such as `src_galaxy_foo.key`.
+PARAMETER = re.compile(r"\bsrc_(?:galaxy_[a-z0-9_]+|ibridges)\b(?!\.(?:ya?ml|py|j2)\b)")
 
 
 def _playbook_files():
     for source in PLAYBOOK_SOURCES:
         path = REPO_ROOT / source
-        yield from sorted(p for p in path.rglob("*") if p.is_file()) if path.is_dir() else [path]
+        files = sorted(path.rglob("*")) if path.is_dir() else [path]
+        yield from (
+            p
+            for p in files
+            if p.is_file() and p.suffix in TEXT_SUFFIXES and "__pycache__" not in p.parts
+        )
 
 
 def _parameters_read():
@@ -57,6 +67,19 @@ def test_playbook_files_are_found():
         "src_galaxy_cd_interval",
     } <= _parameters_read()
     assert "src_galaxy_vars" not in _parameters_read()
+
+
+def test_bytecode_is_not_scanned():
+    # Regression: tests that import the filter plugins write __pycache__/*.pyc.
+    assert compileall.compile_dir(REPO_ROOT / "filter_plugins", quiet=1)
+    assert "src_galaxy_vault_passwordz" not in _parameters_read()
+    assert not any("__pycache__" in p.parts for p in _playbook_files())
+
+
+def test_attribute_access_and_file_names():
+    assert PARAMETER.findall("{{ src_galaxy_foo.key }} vars/src_galaxy_vars.yml") == [
+        "src_galaxy_foo"
+    ]
 
 
 def test_readme_table_lists_every_parameter_the_playbook_reads():

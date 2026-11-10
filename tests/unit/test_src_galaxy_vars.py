@@ -44,3 +44,19 @@ def test_tool_mappings_are_parsed_into_a_list_of_dicts():
     assert _evaluate("_galaxy_pulsar_tool_mappings", **params) == [
         {"tool_id": "bwa", "environment": "remote_x"}
     ]
+
+
+@pytest.mark.parametrize(
+    ("params", "expected"),
+    [
+        ({"src_galaxy_api_exposed": "true"}, True),
+        ({"src_galaxy_api_exposed": "false"}, False),
+        ({"src_galaxy_api_exposed": True}, True),
+        ({"src_galaxy_api_exposed": False}, False),
+        ({"src_galaxy_api_exposed": ""}, True),
+        ({}, True),
+    ],
+)
+def test_api_exposed_is_a_boolean(params, expected):
+    # SRC passes booleans as strings; 'false' must put /api behind SRAM (issue #32).
+    assert _evaluate("_galaxy_api_exposed", **params) is expected

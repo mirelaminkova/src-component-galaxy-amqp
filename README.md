@@ -75,14 +75,14 @@ What a ResearchCloud (SRC) component and catalog item for this playbook need, so
 
 ### Access rules
 
-| Protocol | Direction | Port | Source | Why |
-|----------|-----------|------|--------|-----|
-| tcp | in | 22 | as today | SSH |
-| tcp | in | 80 | as today | HTTP (certificate requests, redirect to HTTPS) |
-| tcp | in | 443 | as today | Galaxy (HTTPS) |
-| tcp | in | 5671 (= `src_galaxy_rabbitmq_port`) | `0.0.0.0/0` | AMQPS for remote Pulsar servers |
+| Protocol | Direction | Port | Source | Mutable | Why |
+|----------|-----------|------|--------|---------|-----|
+| tcp | in | 22 | as today | as today | SSH |
+| tcp | in | 80 | as today | as today | HTTP (certificate requests, redirect to HTTPS) |
+| tcp | in | 443 | as today | as today | Galaxy (HTTPS) |
+| tcp | in | 5671 (= `src_galaxy_rabbitmq_port`) | `0.0.0.0/0` | no | AMQPS for remote Pulsar servers |
 
-Port 5671 is needed only with `src_galaxy_rabbitmq: true`. `0.0.0.0/0` is acceptable: BYOC Pulsars connect from addresses that are not known when the catalog item is made, and the SRC form cannot make the rule mutable so it could be narrowed per workspace. The listener is still protected: it only speaks TLS (1.2/1.3), the `guest` user is removed, the `galaxy` user is accepted from the host itself only, each Pulsar has its own user and password with permissions on its own vhost only, and the management plugin, Erlang port mapper and distribution port are not reachable from outside. When the Pulsar servers' addresses are known, narrow the rule to them.
+Port 5671 is needed only with `src_galaxy_rabbitmq: true`. The SRC catalog item form cannot mark this rule mutable, so it is fixed at `0.0.0.0/0`. That is acceptable for BYOC: Pulsars connect from addresses that are not known when the catalog item is made, and access is protected by TLS plus a separate RabbitMQ user and vhost per Pulsar. In detail: it only speaks TLS (1.2/1.3), the `guest` user is removed, the `galaxy` user is accepted from the host itself only, each Pulsar has its own user and password with permissions on its own vhost only, and the management plugin, Erlang port mapper and distribution port are not reachable from outside.
 
 ### `co_passwordless_sudo`
 
@@ -96,7 +96,7 @@ SRC passes every parameter as a string; booleans are `true`/`false`. An empty in
 |---------------|-----------------|--------------|----------|-------------|
 | `src_galaxy_version` | `26.1` | yes | no | Galaxy release to install; deploys the `release_<version>` branch. Default `26.1`; `26.0` also works. |
 | `src_galaxy_brand` | `SURF ResearchCloud` | yes | no | Brand name shown in the Galaxy web interface. Default `SURF ResearchCloud`. |
-| `src_galaxy_api_exposed` | `true` | yes | no | If `true` (default), the `/api` route does not require SRAM Single Sign-On, so API keys work from outside (needed by the onboarding pipeline). |
+| `src_galaxy_api_exposed` | `true` | yes | no | If `true` (default), the `/api` route does not require SRAM Single Sign-On, so API keys work from outside (needed by the onboarding pipeline). With `false`, `/api` is behind SRAM like the rest of Galaxy. |
 | `src_galaxy_co_admin_group` | `src_co_admin` | no | no | SRAM group whose members become Galaxy admins and may `sudo` (with TOTP). Default `src_co_admin`. |
 | `src_galaxy_jobs_default` | `singularity` | yes | no | Default job destination: `singularity` (default), `docker` or `local`. Other values fall back to `singularity`. |
 | `src_galaxy_interactive_tools` | `true` | yes | no | Enable path-based [interactive tools](#interactive-tools) (installs Docker). Default `false`. |
@@ -130,7 +130,7 @@ Keep `workspace_fqdn` as SRC (the Nginx component) provides it; the playbook use
 * `src_galaxy_pulsar_configs` and `src_galaxy_pulsar_tool_mappings` start empty. Placeholders such as `https://REPLACE` or `your_pulsar_env` create a fake Pulsar and fail the deployment at "Invalid Pulsar configuration".
 * The default `src_galaxy_version` is `26.1`.
 * New parameters: `src_galaxy_pulsar_amqp_configs`, `src_galaxy_vault_password` (secret), `src_galaxy_cd`, `src_galaxy_cd_repo`, `src_galaxy_cd_branch` and `src_galaxy_cd_interval`.
-* `remote_ansible_version` `14.6.0` (was `9.1.0`), base OS Ubuntu 24.04, access rule tcp 5671 in, and `co_passwordless_sudo: false`.
+* `remote_ansible_version` `14.6.0` (was `9.1.0`), base OS Ubuntu 24.04, access rule tcp 5671 in from `0.0.0.0/0` (not mutable), and `co_passwordless_sudo: false`.
 
 ## Bootstrapping
 
@@ -191,7 +191,7 @@ Because we cannot acquire SSL certificates for a wildcard subdomain on ResearchC
 
 With `src_galaxy_rabbitmq: true` the playbook installs RabbitMQ from Ubuntu's `rabbitmq-server` package (see [tasks/rabbitmq.yml](tasks/rabbitmq.yml)). Remote Pulsar servers then connect *to* Galaxy's broker, so they do not need an open inbound port themselves.
 
-* **Firewall**: open TCP `src_galaxy_rabbitmq_port` (default `5671`) in the SRC workspace's security group, ideally only for the Pulsar servers' addresses. No other RabbitMQ port has to be opened.
+* **Firewall**: open TCP `src_galaxy_rabbitmq_port` (default `5671`) in the SRC workspace's security group (see [Access rules](#access-rules): from `0.0.0.0/0` in the catalog item). No other RabbitMQ port has to be opened.
 * **Listeners**: AMQPS on `src_galaxy_rabbitmq_port` (TLS 1.2/1.3, no client certificates). Plain AMQP on `127.0.0.1:5672` only, for Galaxy itself. The Erlang port mapper (`epmd`, 4369) and the Erlang distribution port (25672) are bound to `127.0.0.1`, and the node is named `rabbit@localhost`. The management plugin is disabled.
 * **TLS certificate**: the certificate of the SRC Nginx plugin (acme.sh, `/etc/ssl/acme/<fqdn>/`, or certbot, `/etc/letsencrypt/live/<fqdn>/`; see [tasks/tls_facts.yml](tasks/tls_facts.yml)) is copied to `/etc/rabbitmq/tls/` with the key readable by the `rabbitmq` group only (`root:rabbitmq 0640`). The original key's permissions are not changed. The playbook fails if no certificate is found. Renewed certificates are **not** picked up automatically: re-run the playbook (it copies the new files and restarts RabbitMQ), or restart `rabbitmq-server` after copying them.
 * **Users**: the default `guest` user is removed. A `galaxy` user without management tags is created. Each user's password is generated once and stored in `/etc/galaxy-rabbitmq/<user>.pass` (`root:root 0600`, directory `0700`), so re-runs keep the same passwords. Passwords are never put on a command line (which every local account can read with `ps`): they are passed to `rabbitmqctl add_user`/`change_password` on stdin, and only when the user is missing or its `.pass` file was just created. To rotate a password, delete its `.pass` file and re-run the playbook. A password changed by hand in RabbitMQ is not detected. Tasks that read or set passwords also use `no_log`, which keeps them out of Ansible's output.
