@@ -21,6 +21,7 @@ BASE_VARS = {
     "_galaxy_use_dispatcher": False,
     "_galaxy_remote_destinations": [],
     "_galaxy_byoc_pulsar": False,
+    "_galaxy_pulsar_amqp_configs": [],
 }
 
 REMOTE_DESTINATIONS = [{"id": "remote_byoc_basic", "label": "BYOC 'cluster': \"GPU\""}]

@@ -21,6 +21,18 @@
 - name: Load RabbitMQ variables
   ansible.builtin.include_vars: vars/rabbitmq_vars.yml
 
+- name: Validate src_galaxy_pulsar_amqp_configs
+  ansible.builtin.assert:
+    that: _galaxy_pulsar_amqp_config_errors | length == 0
+    fail_msg: "Invalid src_galaxy_pulsar_amqp_configs: {{ _galaxy_pulsar_amqp_config_errors | join('; ') }}"
+    quiet: true
+
+- name: AMQP Pulsar configs require RabbitMQ
+  ansible.builtin.assert:
+    that: _galaxy_rabbitmq or _galaxy_pulsar_amqp_configs | length == 0
+    fail_msg: "src_galaxy_pulsar_amqp_configs needs src_galaxy_rabbitmq: true (the Pulsars connect to Galaxy's RabbitMQ)."
+    quiet: true
+
 - name: Set admins from CO group
   ansible.builtin.set_fact:
     _galaxy_admins: >-

@@ -25,13 +25,23 @@ _galaxy_rabbitmq_tls_versions:
   - tlsv1.3
   - tlsv1.2
 
-# Extension points for later features (AMQP Pulsar runner, BYOC sync):
+# Extension points for later features (BYOC sync):
 # append vhosts to _galaxy_rabbitmq_vhosts (the galaxy user gets full permissions on each),
 # and users as {name, vhosts: [...], tags: ''} to _galaxy_rabbitmq_users.
-_galaxy_rabbitmq_vhosts: []
-_galaxy_rabbitmq_users:
-  - name: galaxy
-    vhosts: "{{ _galaxy_rabbitmq_vhosts }}"
+# Each AMQP Pulsar (src_galaxy_pulsar_amqp_configs) gets vhost /pulsar/<name> and a user <name>
+# limited to that vhost.
+_galaxy_rabbitmq_vhosts: "{{ _galaxy_pulsar_amqp_configs | map(attribute='vhost') | list }}"
+_galaxy_rabbitmq_users: >-
+  {%- set users = [{'name': 'galaxy', 'vhosts': _galaxy_rabbitmq_vhosts}] -%}
+  {%- for pulsar in _galaxy_pulsar_amqp_configs -%}
+    {%- set _ = users.append({'name': pulsar.name, 'vhosts': [pulsar.vhost]}) -%}
+  {%- endfor -%}
+  {{ users }}
+# Passwords given in the parameters (user name -> password); other users get a generated one.
+# Kept out of _galaxy_rabbitmq_users so that loops over users never carry a password.
+_galaxy_rabbitmq_fixed_passwords: >-
+  {{ dict(_galaxy_pulsar_amqp_configs | selectattr('password', 'defined') | map(attribute='name')
+          | zip(_galaxy_pulsar_amqp_configs | selectattr('password', 'defined') | map(attribute='password'))) }}
 
 # _galaxy_rabbitmq_users in the shape community.rabbitmq.rabbitmq_user expects.
 _galaxy_rabbitmq_users_resolved: >-

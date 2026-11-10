@@ -15,3 +15,5 @@
     src_galaxy_pulsar_configs: "[{name: molecule, label: Molecule Pulsar, url: https://pulsar.invalid, private_token: not-a-secret}]"
     src_galaxy_byoc_pulsar: 'true'
     src_galaxy_rabbitmq: 'true'
+    # Issue #4: one AMQP Pulsar (no Pulsar connects); creates vhost /pulsar/molecule-mq and its user.
+    src_galaxy_pulsar_amqp_configs: "[{name: molecule-mq, label: Molecule AMQP Pulsar}]"

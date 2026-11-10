@@ -29,6 +29,13 @@
     - name: Additional nginx config
       ansible.builtin.include_tasks: tasks/nginx.yml
 
+    # Before the galaxyproject.galaxy role: job_conf.yml needs the RabbitMQ passwords
+    # (_galaxy_rabbitmq_passwords) for the AMQP Pulsar runners, and the broker should be up
+    # before Galaxy starts.
+    - name: Install RabbitMQ for remote Pulsar servers (AMQPS)
+      ansible.builtin.include_tasks: tasks/rabbitmq.yml
+      when: _galaxy_rabbitmq
+
   roles:
     - role: galaxyproject.cvmfs
       when: _galaxy_enable_cvmfs
@@ -97,10 +104,6 @@
         mode: "0644"
       when: _galaxy_use_dispatcher
       notify: restart galaxy
-
-    - name: Install RabbitMQ for remote Pulsar servers (AMQPS)
-      ansible.builtin.include_tasks: tasks/rabbitmq.yml
-      when: _galaxy_rabbitmq
 
     - name: Add nginx user to galaxy group
       ansible.builtin.user:

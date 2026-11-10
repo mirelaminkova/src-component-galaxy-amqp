@@ -49,6 +49,8 @@ A Galaxy machine can be connected to Pulsar inside the SRC, following the [SRC c
 
 When at least one Pulsar destination is configured (`src_galaxy_pulsar_configs`), users get a **Use distributed compute resources** select in their preferences (User → Preferences → Manage information). It lists "default - Galaxy will decide where to put your job" plus one entry per destination, labelled with the config's `label` key or else the host of its `url`. Jobs of a user who picked a destination are sent there by the `default_dispatcher` job rule, which is then `execution.default` in `job_conf.yml`. Some jobs always keep their normal destination: jobs of anonymous users, interactive tools (Docker), uploads (`upload1`, `__DATA_FETCH__`), data sources, data managers, user-defined tools, expression and other Galaxy-internal tools, and tools pinned by `src_galaxy_pulsar_tool_mappings`. A choice whose destination no longer exists falls back to the default.
 
+Remote Pulsar servers can also be connected over a message queue (`src_galaxy_pulsar_amqp_configs`, Galaxy's `PulsarMQJobRunner`), so that the Pulsar server needs no inbound port; see [Pulsar over AMQP](#pulsar-over-amqp). These destinations appear in the same select.
+
 ### Usability of external storage
 
 If you attach additional networked storage to the workspace, you can set `src_galaxy_storage_path` to a path on that storage volume. If your storage is e.g. called "galaxy storage", set the parameter to: `/data/galaxy_storage/datadir`. In theory, this should allow you to re-use datasets, tools, etc. from previous Galaxy workspaces.
@@ -75,6 +77,7 @@ The component takes the following parameters:
 * `src_galaxy_byoc_pulsar`: Boolean (default: `false`). **Experimental.** Show the "Bring your own Pulsar" form (RabbitMQ username/password, maximum cores and memory, minimum/maximum GPUs) in the user preferences. The values are only stored for now; nothing uses them yet.
 * `src_galaxy_rabbitmq`: Boolean (default: `false`). Install a RabbitMQ message broker on the Galaxy host, so remote Pulsar servers can connect to Galaxy over AMQPS. See [RabbitMQ](#rabbitmq-for-remote-pulsar-servers).
 * `src_galaxy_rabbitmq_port`: Integer (default: `5671`). TCP port of the AMQPS listener. Open it in the workspace's security group. Must be 1–65535 and not `5672`, `4369`, `25672`, `80`, `443` or `8080`; the playbook fails otherwise.
+* `src_galaxy_pulsar_amqp_configs`: String (default: empty). Remote Pulsar servers that connect to Galaxy's RabbitMQ, in the same format as `src_galaxy_pulsar_configs`, e.g. `[{name: hpc, label: Our HPC cluster, docker_enabled: true}]`. Requires `src_galaxy_rabbitmq: true`. See [Pulsar over AMQP](#pulsar-over-amqp) for the keys.
 
 ## Bootstrapping
 
@@ -140,13 +143,15 @@ With `src_galaxy_rabbitmq: true` the playbook installs RabbitMQ from Ubuntu's `r
 * **Listeners**: AMQPS on `src_galaxy_rabbitmq_port` (TLS 1.2/1.3, no client certificates). Plain AMQP on `127.0.0.1:5672` only, for Galaxy itself. The Erlang port mapper (`epmd`, 4369) and the Erlang distribution port (25672) are bound to `127.0.0.1`, and the node is named `rabbit@localhost`. The management plugin is disabled.
 * **TLS certificate**: the certificate of the SRC Nginx plugin (acme.sh, `/etc/ssl/acme/<fqdn>/`, or certbot, `/etc/letsencrypt/live/<fqdn>/`; see [tasks/tls_facts.yml](tasks/tls_facts.yml)) is copied to `/etc/rabbitmq/tls/` with the key readable by the `rabbitmq` group only (`root:rabbitmq 0640`). The original key's permissions are not changed. The playbook fails if no certificate is found. Renewed certificates are **not** picked up automatically: re-run the playbook (it copies the new files and restarts RabbitMQ), or restart `rabbitmq-server` after copying them.
 * **Users**: the default `guest` user is removed. A `galaxy` user without management tags is created. Each user's password is generated once and stored in `/etc/galaxy-rabbitmq/<user>.pass` (`root:root 0600`, directory `0700`), so re-runs keep the same passwords. Passwords are never put on a command line (which every local account can read with `ps`): they are passed to `rabbitmqctl add_user`/`change_password` on stdin, and only when the user is missing or its `.pass` file was just created. To rotate a password, delete its `.pass` file and re-run the playbook. A password changed by hand in RabbitMQ is not detected. Tasks that read or set passwords also use `no_log`, which keeps them out of Ansible's output.
-* **Extending**: append vhosts to `_galaxy_rabbitmq_vhosts` (the `galaxy` user gets full permissions on each) and users as `{name, vhosts, tags}` to `_galaxy_rabbitmq_users` in [vars/rabbitmq_vars.yml](vars/rabbitmq_vars.yml). The playbook sets `_galaxy_rabbitmq_passwords` (user name → password) for building `amqp_url`s. This version creates no Pulsar vhosts yet.
+* **Extending**: append vhosts to `_galaxy_rabbitmq_vhosts` (the `galaxy` user gets full permissions on each) and users as `{name, vhosts, tags}` to `_galaxy_rabbitmq_users` in [vars/rabbitmq_vars.yml](vars/rabbitmq_vars.yml). The playbook sets `_galaxy_rabbitmq_passwords` (user name → password) for building `amqp_url`s. Each entry of `src_galaxy_pulsar_amqp_configs` adds a vhost and a user (see [Pulsar over AMQP](#pulsar-over-amqp)).
+* **`galaxy` user**: its password is in Galaxy's `job_conf.yml`, so RabbitMQ only accepts it from the host itself (`loopback_users.galaxy = true`); remote Pulsars use their own users.
+* **Ordering**: RabbitMQ is set up in the playbook's `pre_tasks`, before the Galaxy role writes `job_conf.yml` (which needs the passwords) and starts Galaxy.
 * Galaxy's Celery keeps using Postgres. RabbitMQ is only for Pulsar.
 * **Connection URLs** (one vhost per Pulsar server, and one Galaxy MQ runner per vhost):
-  * Galaxy runner `amqp_url`: `pyamqp://galaxy:<password>@localhost:5672//pulsar/<name>` (plain AMQP over loopback).
+  * Galaxy runner `amqp_url`: `pyamqp://galaxy:<password>@127.0.0.1:5672//pulsar/<name>` (plain AMQP over loopback; `127.0.0.1` rather than `localhost`, which may resolve to `::1` where nothing listens).
   * Pulsar `message_queue_url`: `pyamqp://<pulsar user>:<password>@<workspace_fqdn>:<src_galaxy_rabbitmq_port>//pulsar/<name>?ssl=1`. The vhost's leading `/` follows the port's `/`, hence `//`.
   * `?ssl=1` alone encrypts the connection but does **not** verify the server certificate's hostname (py-amqp default). To verify it, set Pulsar's `amqp_connect_ssl_cert_reqs: required` and `amqp_connect_ssl_ca_certs`.
-  * Generated passwords contain only letters and digits, so they need no URL escaping.
+  * Generated passwords contain only letters and digits, and given ones only URL-unreserved characters, so they need no URL escaping.
 * **Ubuntu versions**: tested end to end on Ubuntu 24.04 (noble: RabbitMQ 3.12.1, Erlang 25.3). Ubuntu 22.04 (jammy) ships older RabbitMQ (3.9) and Erlang (24) that support the same settings (TLS 1.3, `distribution.listener.interface`), but the configuration has not been verified there; the molecule scenario (jammy image) prints the installed versions in `verify.yml`.
 
 The [`usegalaxy_eu.rabbitmqserver`](https://github.com/usegalaxy-eu/ansible-rabbitmq) role used in the GTN Pulsar tutorial is not used, because it runs RabbitMQ in Docker:
@@ -154,6 +159,48 @@ The [`usegalaxy_eu.rabbitmqserver`](https://github.com/usegalaxy-eu/ansible-rabb
 * the role passes passwords on `rabbitmqctl` command lines without `no_log`;
 * it publishes the management port;
 * Docker-published ports bypass the host firewall.
+
+### Pulsar over AMQP
+
+`src_galaxy_pulsar_amqp_configs` connects remote Pulsar servers through Galaxy's RabbitMQ (`src_galaxy_rabbitmq: true` is required; the playbook fails otherwise). The parameter uses the same format as `src_galaxy_pulsar_configs` and is parsed by the same code ([filter_plugins/src_galaxy.py](filter_plugins/src_galaxy.py)). Keys of each entry:
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `name` | required | `[a-z0-9_-]+`, at most 64 characters, unique, not `galaxy` or `guest`. Names the RabbitMQ user and vhost and the job environment. |
+| `label` | `name` | Shown to users in **Use distributed compute resources**. |
+| `password` | generated | Password of the Pulsar's RabbitMQ user: at least 12 characters from `A-Z a-z 0-9 . _ ~ -`. Leave it out to have one generated (32 letters/digits, kept across re-runs). Setting or changing it updates the user. |
+| `docker_enabled` | `false` | Run the Pulsar's jobs in Docker containers. |
+| `singularity_enabled` | `false` | Run the Pulsar's jobs in Singularity/Apptainer containers. |
+| `dependency_resolution` | `remote` | `remote` (Pulsar resolves tool dependencies), `local` or `none`. |
+| `manager` | `_default_` | Pulsar job manager the Galaxy runner talks to; the Pulsar must define it under `managers:`. |
+| `jobs_directory` | `/mnt/pulsar/files/staging` | Pulsar's `staging_directory`. |
+
+Invalid entries (bad or duplicate names, unknown keys, bad values) fail the playbook before anything is installed, with one message per problem; passwords are never echoed.
+
+For each entry `<name>` the playbook creates:
+
+* RabbitMQ vhost `/pulsar/<name>` and user `<name>` with permissions on that vhost only; the `galaxy` user gets permissions on it too.
+* Job runner `pulsar_mq_<name>` (`PulsarMQJobRunner`, `amqp_url` with the `galaxy` user over `127.0.0.1:5672`, `galaxy_url` = the workspace URL, `manager`, message acknowledgement with republishing after 1200 s, `amqp_consumer_timeout: 2.0`, publish retries) and job environment `amqp_<name>` (`remote_transfer` file staging, `rewrite_parameters`, no remote metadata). One runner per Pulsar is needed because a runner serves exactly one `amqp_url` (vhost).
+* An entry `amqp_<name>` in the users' **Use distributed compute resources** select. `src_galaxy_pulsar_tool_mappings` may also map tools to `amqp_<name>`.
+* `/etc/galaxy-rabbitmq/pulsar_<name>.txt` (`root:root 0600`): the settings to paste into that Pulsar's `app.yml`, including its password.
+
+The Pulsar server needs network access to `<workspace_fqdn>:<src_galaxy_rabbitmq_port>` (AMQPS) and to Galaxy's HTTPS URL (it fetches inputs and uploads outputs there), and the `kombu` Python package. Its `app.yml` then contains, for example:
+
+```yaml
+message_queue_url: "pyamqp://hpc:<password>@galaxy.example.org:5671//pulsar/hpc?ssl=1"
+staging_directory: /mnt/pulsar/files/staging   # = jobs_directory
+managers:
+  _default_:                                    # = manager
+    type: queued_python
+    num_concurrent_jobs: 1
+    min_polling_interval: 0.5
+amqp_acknowledge: true
+amqp_ack_republish_time: 1200
+amqp_publish_retry: true
+amqp_publish_retry_max_retries: 60
+```
+
+Removing an entry removes its runner, environment and select option, but not its RabbitMQ user, vhost or files in `/etc/galaxy-rabbitmq/`; delete those by hand (`rabbitmqctl delete_user <name>`, `rabbitmqctl delete_vhost /pulsar/<name>`). `job_conf.yml` holds the `galaxy` RabbitMQ password and is deployed `0640` (group `galaxy`), like `galaxy.yml`.
 
 ## Maintenance
 
