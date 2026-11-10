@@ -139,7 +139,8 @@
       register: rabbitmq_files
 
     - name: Authenticate the galaxy user with its stored password
-      ansible.builtin.shell: rabbitmqctl authenticate_user galaxy "$(cat /etc/galaxy-rabbitmq/galaxy.pass)"
+      # The password goes in on stdin, never on the command line.
+      ansible.builtin.shell: rabbitmqctl -n rabbit@localhost --quiet authenticate_user galaxy < /etc/galaxy-rabbitmq/galaxy.pass
       changed_when: false
       no_log: true
 

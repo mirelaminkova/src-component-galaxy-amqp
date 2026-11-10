@@ -1,5 +1,6 @@
 """Optional RabbitMQ (AMQPS) broker on the Galaxy host (issue #3)."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,35 @@ def test_rabbitmq_is_opt_in(params, expected):
 )
 def test_rabbitmq_port(params, expected):
     assert _resolve(**params)("_galaxy_rabbitmq_port") == expected
+
+
+@pytest.mark.parametrize("port", [None, "", "5671", "5673", 5673, "1", "65535"])
+def test_valid_rabbitmq_ports_pass_validation(port):
+    params = {} if port is None else {"src_galaxy_rabbitmq_port": port}
+
+    assert not _resolve(**params)("_galaxy_rabbitmq_port_error")
+
+
+@pytest.mark.parametrize(
+    "port",
+    ["abc", "-1", "0", "70000", "56.7", "5672", "4369", "25672", "80", "443", "8080", 5672],
+)
+def test_invalid_rabbitmq_ports_are_rejected(port):
+    error = _resolve(src_galaxy_rabbitmq_port=port)("_galaxy_rabbitmq_port_error")
+
+    assert error.startswith("src_galaxy_rabbitmq_port")
+    assert "\n" not in error
+    assert f"'{port}'" in error
+
+
+def test_port_is_validated_before_anything_is_installed():
+    first = next(_tasks(TASKS_FILE))
+
+    assert first["ansible.builtin.assert"]["that"] == "not _galaxy_rabbitmq_port_error"
+    assert (
+        first["ansible.builtin.assert"]["fail_msg"]
+        == "{{ _galaxy_rabbitmq_port_error | default('', true) }}"
+    )
 
 
 def test_rabbitmq_does_not_enable_docker():
@@ -189,6 +219,12 @@ def test_rabbitmqctl_modules_target_the_loopback_node():
     assert len(calls) == 3
     assert {call.get("node") for call in calls} == {"{{ _galaxy_rabbitmq_node }}"}
 
+    rabbitmqctl = [task["ansible.builtin.command"]["argv"] for task in _rabbitmqctl_tasks()]
+    assert rabbitmqctl
+    assert {tuple(argv[:3]) for argv in rabbitmqctl} == {
+        ("rabbitmqctl", "-n", "{{ _galaxy_rabbitmq_node }}")
+    }
+
 
 def test_pulsar_layout_one_vhost_per_pulsar_shared_with_galaxy():
     # Issue #4: one MQ runner per Pulsar vhost. Galaxy connects as `galaxy` over 127.0.0.1:5672,
@@ -219,3 +255,110 @@ def test_generated_passwords_are_url_safe():
 
     assert len(contents) == 1
     assert "chars=['ascii_letters', 'digits']" in contents[0]
+
+
+# --- passwords never on a command line ------------------------------------------
+# Every local account (CO members, Galaxy jobs) can read other processes' argv via ps or
+# /proc/<pid>/cmdline; no_log only hides Ansible's own output.
+
+COMMAND_MODULES = ("ansible.builtin.command", "ansible.builtin.shell", "command", "shell")
+JINJA_EXPRESSION = re.compile(r"\{\{(.*?)\}\}")
+STRING_LITERAL = re.compile(r"'[^']*'|\"[^\"]*\"")
+SHELL_SUBSTITUTION_OF_PASS_FILE = re.compile(r"\$\([^)]*\.pass|`[^`]*\.pass")
+
+
+def _leaks_secret(command_line):
+    """Jinja expression referring to a password variable, or shell substitution of a .pass file."""
+    expressions = [STRING_LITERAL.sub("", e) for e in JINJA_EXPRESSION.findall(command_line)]
+    return any("pass" in e.lower() for e in expressions) or bool(
+        SHELL_SUBSTITUTION_OF_PASS_FILE.search(command_line)
+    )
+
+
+PLAYBOOK_FILES = [
+    *sorted((REPO_ROOT / "tasks").glob("*.yml")),
+    REPO_ROOT / "galaxysrv.yml",
+    *sorted((REPO_ROOT / "molecule").glob("*/*.yml")),
+]
+
+
+def _dicts(node):
+    if isinstance(node, dict):
+        yield node
+        node = list(node.values())
+    if isinstance(node, list):
+        for child in node:
+            yield from _dicts(child)
+
+
+def _all_tasks():
+    for path in PLAYBOOK_FILES:
+        for task in _dicts(yaml.safe_load(path.read_text())):
+            yield path.relative_to(REPO_ROOT), task
+
+
+def _command_line(args):
+    if isinstance(args, str):
+        return args
+    return " ".join([*args.get("argv", []), args.get("cmd", ""), args.get("_raw_params", "")])
+
+
+def test_secret_detector_flags_argv_leaks():
+    assert _leaks_secret('rabbitmqctl add_user galaxy "{{ _galaxy_rabbitmq_passwords.galaxy }}"')
+    assert _leaks_secret(
+        "rabbitmqctl add_user galaxy {{ lookup('file', 'x') | b64decode }} {{ PASS }}"
+    )
+    assert _leaks_secret('rabbitmqctl authenticate_user galaxy "$(cat /x/galaxy.pass)"')
+    assert _leaks_secret("rabbitmqctl authenticate_user galaxy `cat /x/galaxy.pass`")
+    assert not _leaks_secret("rabbitmqctl -q change_password galaxy < /x/galaxy.pass")
+    assert not _leaks_secret("rabbitmqctl {{ x | ternary('change_password', \"add_user\") }}")
+
+
+def test_no_password_is_passed_to_rabbitmq_user():
+    offenders = [
+        (str(path), task.get("name"))
+        for path, task in _all_tasks()
+        for key, args in task.items()
+        if key.endswith("rabbitmq_user")
+        and isinstance(args, dict)
+        and {"password", "update_password"} & args.keys()
+    ]
+
+    assert offenders == []
+
+
+def test_no_password_on_a_command_line():
+    commands = [
+        (str(path), task.get("name"), _command_line(args))
+        for path, task in _all_tasks()
+        for key, args in task.items()
+        if key in COMMAND_MODULES
+    ]
+
+    assert commands
+    assert [command for command in commands if _leaks_secret(command[2])] == []
+
+
+def _rabbitmqctl_tasks():
+    return [
+        task
+        for task in _tasks(TASKS_FILE)
+        if task.get("ansible.builtin.command", {}).get("argv", [None])[0] == "rabbitmqctl"
+    ]
+
+
+def test_passwords_are_set_through_stdin_only_when_new_or_changed():
+    setters = [task for task in _rabbitmqctl_tasks() if "stdin" in task["ansible.builtin.command"]]
+
+    assert len(setters) == 1
+    task = setters[0]
+    command = task["ansible.builtin.command"]
+    assert command["stdin"] == "{{ _galaxy_rabbitmq_passwords[item.item.name] }}"
+    assert command["argv"][-1] == "{{ item.item.name }}"
+    assert "add_user" in command["argv"][-2]
+    assert "change_password" in command["argv"][-2]
+    assert task["no_log"] is True
+    assert task["loop"] == "{{ _galaxy_rabbitmq_password_files_written.results }}"
+    assert (
+        task["when"] == "item is changed or item.item.name not in _galaxy_rabbitmq_existing_users"
+    )
