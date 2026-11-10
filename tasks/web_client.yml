@@ -1,0 +1,50 @@
+---
+# Galaxy 26.1+ (_galaxy_web_client_wheel): install the prebuilt client, the galaxy-web-client
+# wheel, into Galaxy's venv and link its dist/ to static/dist, where nginx serves /static from
+# (vars/nginx_vars.yml). This replaces the galaxyproject.galaxy role's client step
+# (galaxy_build_client: false), which still runs pnpm in the server dir, but 26.1 has no
+# package.json there any more. Same as Galaxy's own scripts/common_startup.sh with
+# GALAXY_INSTALL_PREBUILT_CLIENT=1.
+- name: Read the version of the Galaxy checkout
+  ansible.builtin.command:
+    argv: ["{{ galaxy_venv_dir }}/bin/python", -c, "from galaxy.version import VERSION; print(VERSION)"]
+  environment:
+    PYTHONPATH: "{{ galaxy_server_dir }}/lib"
+  register: _galaxy_checkout_version
+  changed_when: false
+
+- name: Install the prebuilt Galaxy client
+  become: true
+  become_user: "{{ galaxy_privsep_user }}"
+  ansible.builtin.pip:
+    name: "{{ _galaxy_checkout_version.stdout | galaxy_web_client_requirement }}"
+    virtualenv: "{{ galaxy_venv_dir }}"
+  notify: restart galaxy
+
+- name: Locate the prebuilt client files
+  ansible.builtin.command:
+    argv:
+      - "{{ galaxy_venv_dir }}/bin/python"
+      - -c
+      - "import os, galaxy.web_client; print(os.path.join(os.path.dirname(galaxy.web_client.__file__), 'dist'))"
+  register: _galaxy_web_client_dist
+  changed_when: false
+
+- name: Check for a client staged by an earlier Galaxy (< 26.1) deployment
+  ansible.builtin.stat:
+    path: "{{ galaxy_server_dir }}/static/dist"
+  register: _galaxy_static_dist
+
+- name: Remove the client staged by an earlier Galaxy deployment
+  ansible.builtin.file:
+    path: "{{ galaxy_server_dir }}/static/dist"
+    state: absent
+  when: _galaxy_static_dist.stat.isdir | default(false) and not _galaxy_static_dist.stat.islnk
+
+- name: Serve the prebuilt client from static/dist
+  ansible.builtin.file:
+    path: "{{ galaxy_server_dir }}/static/dist"
+    src: "{{ _galaxy_web_client_dist.stdout }}"
+    state: link
+    owner: "{{ galaxy_privsep_user }}"
+    group: "{{ galaxy_user }}"

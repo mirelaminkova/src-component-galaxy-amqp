@@ -141,10 +141,25 @@ def pulsar_amqp_configs(entries):
     return configs
 
 
+def galaxy_web_client_requirement(version):
+    """Return the pip requirement for the prebuilt client of Galaxy ``version`` (26.1+).
+
+    Same rule as Galaxy's ``scripts/common_startup.sh``: a tagged release needs exactly its own
+    ``galaxy-web-client`` wheel; an untagged ``.devN``/``rcN`` version (a ``release_*`` branch
+    tip) has none on PyPI, so take the latest release below it.
+    """
+    version = version.strip()
+    release = re.sub(r"\.?(dev|rc)\d*.*$", "", version)
+    if release != version:
+        return f"galaxy-web-client<{release}"
+    return f"galaxy-web-client=={version}"
+
+
 class FilterModule:
     def filters(self):
         return {
             "src_config_list": src_config_list,
             "pulsar_amqp_configs": pulsar_amqp_configs,
             "pulsar_amqp_config_errors": pulsar_amqp_config_errors,
+            "galaxy_web_client_requirement": galaxy_web_client_requirement,
         }

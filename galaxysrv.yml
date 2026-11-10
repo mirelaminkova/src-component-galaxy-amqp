@@ -90,6 +90,10 @@
         group: "{{ galaxy_user }}"
         mode: "0644"
 
+    - name: Install the prebuilt Galaxy client (Galaxy 26.1+)
+      ansible.builtin.include_tasks: tasks/web_client.yml
+      when: _galaxy_web_client_wheel
+
     - name: Enable interactive tools
       ansible.builtin.include_tasks: tasks/interactive_tools.yml
       when: _galaxy_use_interactive_tools

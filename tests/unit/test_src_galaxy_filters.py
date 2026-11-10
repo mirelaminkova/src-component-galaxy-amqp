@@ -5,6 +5,7 @@ from ansible.errors import AnsibleFilterError
 
 from filter_plugins.src_galaxy import (
     FilterModule,
+    galaxy_web_client_requirement,
     pulsar_amqp_config_errors,
     pulsar_amqp_configs,
     src_config_list,
@@ -75,6 +76,7 @@ def test_filters_are_registered():
         "src_config_list": src_config_list,
         "pulsar_amqp_configs": pulsar_amqp_configs,
         "pulsar_amqp_config_errors": pulsar_amqp_config_errors,
+        "galaxy_web_client_requirement": galaxy_web_client_requirement,
     }
 
 
