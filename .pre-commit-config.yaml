@@ -5,7 +5,7 @@
 # Versions of the local Python hooks match requirements-dev.txt; keep them in sync.
 default_install_hook_types: [pre-commit, pre-push]
 default_stages: [pre-commit]
-exclude: ^molecule/_testfiles/  # fixtures, kept byte-for-byte
+exclude: ^(molecule/_testfiles/|tests/unit/byoc_pr/fixtures/)  # fixtures, kept byte-for-byte
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -53,7 +53,9 @@ repos:
           - Jinja2==3.1.6
           - PyYAML==6.0.3
           - ansible-core==2.21.6
-        files: ^(tests/|templates/|pyproject\.toml$)
+          - requests==2.34.2
+          - ruamel.yaml==0.19.1
+        files: ^(tests/|templates/|scripts/|pyproject\.toml$)
         pass_filenames: false
 
       - id: ast-grep-test

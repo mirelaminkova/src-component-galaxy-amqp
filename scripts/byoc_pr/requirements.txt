@@ -1,0 +1,5 @@
+# Runtime dependencies of scripts/byoc_pr (also listed in requirements-dev.txt for the tests).
+# python3 -m venv .venv && .venv/bin/pip install -r scripts/byoc_pr/requirements.txt
+requests~=2.34.2
+ruamel.yaml~=0.19.1
+ansible-core~=2.21.6

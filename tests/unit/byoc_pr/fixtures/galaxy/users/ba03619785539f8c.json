@@ -1,0 +1,18 @@
+{
+  "id": "ba03619785539f8c",
+  "username": "dave",
+  "email": "dave@example.org",
+  "active": true,
+  "deleted": false,
+  "purged": false,
+  "is_admin": false,
+  "preferences": {
+    "extra_user_preferences": "{\"byoc_pulsar|username\": \"egi01\", \"byoc_pulsar|password\": \"DavePuls4rPassw0rd\", \"byoc_pulsar|max_accepted_cores\": \"8\", \"byoc_pulsar|max_accepted_mem\": \"15\", \"byoc_pulsar|min_accepted_gpus\": \"0\", \"byoc_pulsar|max_accepted_gpus\": \"0\", \"distributed_compute|remote_resources\": \"None\"}"
+  },
+  "preferred_object_store_id": null,
+  "total_disk_usage": 0.0,
+  "nice_total_disk_usage": "0 bytes",
+  "quota": "unlimited",
+  "quota_percent": null,
+  "quota_bytes": null
+}

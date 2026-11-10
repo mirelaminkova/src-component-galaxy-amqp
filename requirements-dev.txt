@@ -11,3 +11,6 @@ ruff~=0.17.4
 pre-commit~=4.7.0
 semgrep~=1.184.0
 ast-grep-cli~=0.51.1
+# Runtime dependencies of scripts/byoc_pr (scripts/byoc_pr/requirements.txt), needed by its tests.
+requests~=2.34.2
+ruamel.yaml~=0.19.1

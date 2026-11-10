@@ -202,6 +202,112 @@ amqp_publish_retry_max_retries: 60
 
 Removing an entry removes its runner, environment and select option, but not its RabbitMQ user, vhost or files in `/etc/galaxy-rabbitmq/`; delete those by hand (`rabbitmqctl delete_user <name>`, `rabbitmqctl delete_vhost /pulsar/<name>`). `job_conf.yml` holds the `galaxy` RabbitMQ password and is deployed `0640` (group `galaxy`), like `galaxy.yml`.
 
+## BYOC PR generator (`scripts/byoc_pr`)
+
+[`scripts/byoc_pr`](scripts/byoc_pr) is an operator script, not part of the playbook. It reads the **Bring your own Pulsar endpoint** (`byoc_pulsar`) form of all Galaxy users through the Galaxy API and adds each new endpoint to an [infrastructure-playbook](https://github.com/usegalaxy-eu/infrastructure-playbook)-style repository. The changes look like the hand-written usegalaxy.eu PRs ([#1384](https://github.com/usegalaxy-eu/infrastructure-playbook/pull/1384), [#872](https://github.com/usegalaxy-eu/infrastructure-playbook/pull/872)).
+
+By default it only edits the files in a checkout (`--repo-path`). A CI/CD pipeline commits the result and opens the pull request. Opening the PRs from the script itself (`--open-pr`) is optional.
+
+For a form with RabbitMQ username `<name>`, `<id>` is `<name>` with `-` replaced by `_`. Each endpoint changes five files:
+
+| File | Change |
+|------|--------|
+| `files/galaxy/config/user_preferences_extra_conf.yml` | `["BYOC Pulsar - <name>", <name>-pulsar]` appended to the `distributed_compute` options |
+| `files/galaxy/tpv/destinations.yml.j2` | destination `pulsar_<id>_tpv` (`inherits: pulsar_default`, `runner: pulsar_eu_<id>`, the form's core/memory/GPU limits, `scheduling.require: [<name>-pulsar]`) at the end of the `PULSAR DESTINATIONS` section |
+| `group_vars/mq.yml` | `rabbitmq_users` entry `galaxy_<id>`, vhost `/pulsar/galaxy_<id>` |
+| `secret_group_vars/pulsar.yml` | `rabbitmq_password_galaxy_<id>` (the form's password), encrypted again with Ansible Vault |
+| `templates/galaxy/config/job_conf.yml` | `PulsarMQJobRunner` plugin `pulsar_eu_<id>` |
+
+New entries are inserted as text after the last existing one, so the rest of each file stays unchanged. For the YAML files, `ruamel.yaml` (round-trip mode) finds the place and checks the result.
+
+**Setup** (from the repository root):
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r scripts/byoc_pr/requirements.txt
+```
+
+**Secrets** are never accepted on the command line:
+
+* Galaxy **admin** API key: `--api-key-file <file>` or `$GALAXY_API_KEY`.
+* Vault password of `secret_group_vars/pulsar.yml`: `--vault-password-file <file>` or `$ANSIBLE_VAULT_PASSWORD_FILE`. Use a plain file (first line, whitespace stripped); vault-id scripts are not supported. It is needed to write the files. A dry run without it does not check or change the vault file.
+
+**Files only** (default, no git commands): add all new endpoints to an existing checkout:
+
+```bash
+GALAXY_API_KEY=... ANSIBLE_VAULT_PASSWORD_FILE=~/.vault_pass \
+  .venv/bin/python -m scripts.byoc_pr --galaxy-url https://galaxy.example.org \
+  --repo-path ../infrastructure-playbook --summary-json byoc-summary.json
+```
+
+Add `--dry-run` to print the diff and write nothing.
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | New endpoints were written (with `--dry-run`, would be written; with `--open-pr`, PRs opened or would be opened). |
+| `3` | Nothing new: every valid request is already in the files (or has an open PR). |
+| `1` | Error (Galaxy, vault, file layout, git/gh). With several endpoints the others are still processed, and the summary shows which one failed. |
+| `2` | Bad command line. |
+
+`--summary-json <path>` writes a summary with no passwords or email addresses:
+
+* `new`: per endpoint, `id`, `galaxy_username`, `status` (`written`, `would_write`, `opened`, `would_open`, `pr_reused`, `branch_exists` or `failed` with `error`), `files` changed, `tag`, `rabbitmq_user`, `vhost`, `runner` and `destination`.
+* `present`, `skipped` (`galaxy_username`, `reason`) and `invalid` (`galaxy_username`, `errors`).
+* `pr`: a suggested `title` and `body` for the written endpoints, or `null` if there are none.
+* `exit_code` and `error`.
+
+**Running from a CI pipeline.** The pipeline owns the PR. A scheduled job:
+
+1. checks out the infrastructure-playbook repository and creates a branch, e.g. `byoc/$(date +%Y%m%d-%H%M)`;
+2. writes the CI secrets to files readable only by the job, and exports their paths:
+
+   ```bash
+   umask 077
+   printf '%s' "$CI_VAULT_PASSWORD" > "$RUNNER_TEMP/vault_pass"
+   export ANSIBLE_VAULT_PASSWORD_FILE="$RUNNER_TEMP/vault_pass"
+   export GALAXY_API_KEY="$CI_GALAXY_API_KEY"   # masked CI variable, not on a command line
+   ```
+
+3. runs the script on the checkout:
+
+   ```bash
+   python -m scripts.byoc_pr --galaxy-url "$GALAXY_URL" \
+     --repo-path infrastructure-playbook --summary-json summary.json || status=$?
+   ```
+
+4. on exit code `3`, stops without a PR. On `1`, fails the job (and still reads `summary.json` to see which endpoint failed). On `0`, commits the changed files and opens a PR with `jq -r .pr.title summary.json` as the title and `jq -r .pr.body summary.json` as the body;
+5. deletes the secret files.
+
+A request whose PR is still open is reported as `new` again on the next run, because the base branch does not have it yet. The pipeline should therefore reuse its open BYOC PR (for example a fixed branch name updated with a force push) instead of opening one per run.
+
+**Optional: open the PRs from the script** (`--open-pr`). This needs `git`, and the [`gh`](https://cli.github.com/) CLI logged in with push access to the target repository. The script clones `--target-repo` (or reuses `--workdir`) and makes one branch `byoc/<id>` from `--base-branch` per endpoint. It is a dry run unless `--apply` is given:
+
+```bash
+.venv/bin/python -m scripts.byoc_pr --galaxy-url https://galaxy.example.org --open-pr \
+  --api-key-file /etc/galaxy/automation_api_key --vault-password-file ~/.vault_pass --apply
+```
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `--galaxy-url` | required | Galaxy to read the forms from. |
+| `--repo-path` | required unless `--open-pr` | Checkout to edit in place. |
+| `--dry-run` | off | Print the diff and write nothing (files mode). |
+| `--summary-json` | none | Machine-readable summary, see above. |
+| `--open-pr` | off | Open one PR per endpoint instead of editing a checkout. |
+| `--apply` | off | With `--open-pr`: push and open the PRs (otherwise a dry run). |
+| `--target-repo` | `mirelaminkova/infrastructure-playbook` | `--open-pr`: GitHub repository for the PRs. Pass `usegalaxy-eu/infrastructure-playbook` only on purpose. |
+| `--base-branch` | `master` | `--open-pr`: branch the PRs start from and target. |
+| `--workdir` | temporary | `--open-pr`: clone of the target repository. An existing clone is reused (`git fetch`). |
+| `--mq-host`, `--mq-port`, `--pulsar-galaxy-url` | `mq.galaxyproject.eu`, `5671`, `https://usegalaxy.eu` | Broker and `galaxy_url` in the new runners' `amqp_url`/`galaxy_url`. |
+
+Behavior:
+
+* **Validation**: RabbitMQ username `^[a-z0-9_-]{3,32}$`, password alphanumeric (10-128 characters), cores 1-1024, memory 1-16384 GB, GPUs 0-64 with min ≤ max. Invalid forms are skipped and reported by field and rule. The submitted values are never shown, and empty forms are ignored.
+* **Idempotent**: an endpoint already in all target files is reported as `present`, and a second run on the same checkout changes nothing (exit code `3`). An endpoint found in only some of them (or whose `<name>-pulsar` tag is taken) is skipped for manual review. If two Galaxy users ask for the same `<id>`, the first one in Galaxy's user list wins. With `--open-pr`, an open PR for `byoc/<id>` is reused (nothing is pushed), and a `byoc/<id>` branch without an open PR is left alone (delete it to retry).
+* **Secrets**: the RabbitMQ password is only ever written into the vault-encrypted `secret_group_vars/pulsar.yml`, in memory. It never appears in command lines, logs, the summary, the PR description or unencrypted files. The PR description names the requesting Galaxy username (not the email). If `secret_group_vars/pulsar.yml` is not vault-encrypted, the script refuses to write it.
+* **Reading passwords**: `GET /api/users/{id}/information/inputs` returns `type: password` fields in clear but masks `type: secret` fields, and this repository's form uses `type: secret`. For a masked password, the script reads the raw value from the admin view of `GET /api/users/{id}` (`preferences.extra_user_preferences`). A password kept in Galaxy's vault (`store: vault`) cannot be read, and such a form is reported as invalid.
+* An optional read-only check against a deployed Galaxy runs when `GALAXY_URL` and `GALAXY_API_KEY` are set: `.venv/bin/pytest tests/unit/byoc_pr/test_live.py`. It needs a user who filled in the form.
+
 ## Maintenance
 
 You can stop/restart Galaxy using systemctl, e.g.: `<sudo> systemctl restart galaxy.target`. Use e.g. `<sudo> galaxyctl follow` to follow the logs of all Galaxy services.

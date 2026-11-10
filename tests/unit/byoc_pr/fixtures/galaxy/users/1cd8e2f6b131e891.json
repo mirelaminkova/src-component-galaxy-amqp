@@ -1,0 +1,18 @@
+{
+  "id": "1cd8e2f6b131e891",
+  "username": "carol",
+  "email": "carol@example.org",
+  "active": true,
+  "deleted": false,
+  "purged": false,
+  "is_admin": false,
+  "preferences": {
+    "extra_user_preferences": "{\"byoc_pulsar|username\": \"Carol!\", \"byoc_pulsar|password\": \"Carol-pw!\", \"byoc_pulsar|max_accepted_cores\": \"0\", \"byoc_pulsar|max_accepted_mem\": \"lots\", \"byoc_pulsar|min_accepted_gpus\": \"2\", \"byoc_pulsar|max_accepted_gpus\": \"1\", \"distributed_compute|remote_resources\": \"None\"}"
+  },
+  "preferred_object_store_id": null,
+  "total_disk_usage": 0.0,
+  "nice_total_disk_usage": "0 bytes",
+  "quota": "unlimited",
+  "quota_percent": null,
+  "quota_bytes": null
+}

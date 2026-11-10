@@ -7,6 +7,7 @@ ignore: |
   .venv/
   .ansible/
   molecule/_testfiles/
+  tests/unit/byoc_pr/fixtures/
 
 rules:
   comments:

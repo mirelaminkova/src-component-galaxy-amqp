@@ -4,6 +4,7 @@ exclude_paths:
   - docs
   - .github
   - molecule/
+  - tests/unit/byoc_pr/fixtures/
 skip_list:
   - role-name
   - var-naming

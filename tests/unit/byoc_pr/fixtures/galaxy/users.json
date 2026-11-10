@@ -1,0 +1,32 @@
+[
+  {
+    "id": "f2db41e1fa331b3e",
+    "username": "alice",
+    "email": "alice@example.org"
+  },
+  {
+    "id": "417e33144b294c21",
+    "username": "bob",
+    "email": "bob@example.org"
+  },
+  {
+    "id": "1cd8e2f6b131e891",
+    "username": "carol",
+    "email": "carol@example.org"
+  },
+  {
+    "id": "ba03619785539f8c",
+    "username": "dave",
+    "email": "dave@example.org"
+  },
+  {
+    "id": "5969b1f7201f12ae",
+    "username": "erin",
+    "email": "erin@example.org"
+  },
+  {
+    "id": "c8bb2ac10d3c6d1a",
+    "username": "frank",
+    "email": "frank@example.org"
+  }
+]
