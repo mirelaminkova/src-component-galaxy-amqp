@@ -656,10 +656,24 @@ def test_unresolvable_vault_variable_is_an_error(tmp_path):
 
 def test_playbook_loads_onboarding_before_rabbitmq():
     playbook = yaml.safe_load((REPO_ROOT / "galaxysrv.yml").read_text())[0]
-    includes = [t.get("ansible.builtin.include_tasks") for t in playbook["pre_tasks"]]
+    includes = [_include_file(t) for t in playbook["pre_tasks"]]
 
     assert includes.index("tasks/set_config.yml") < includes.index("tasks/byoc_onboarding.yml")
     assert includes.index("tasks/byoc_onboarding.yml") < includes.index("tasks/rabbitmq.yml")
+
+
+def _include_file(task):
+    include = task.get("ansible.builtin.include_tasks")
+    return include.get("file") if isinstance(include, dict) else include
+
+
+def test_onboarding_runs_with_any_tags():
+    """The CD job (issue #22) runs `--tags rabbitmq,galaxy_config_files`."""
+    playbook = yaml.safe_load((REPO_ROOT / "galaxysrv.yml").read_text())[0]
+    [task] = [t for t in playbook["pre_tasks"] if _include_file(t) == "tasks/byoc_onboarding.yml"]
+
+    assert task["tags"] == "always"
+    assert task["ansible.builtin.include_tasks"]["apply"] == {"tags": "always"}
 
 
 def test_set_config_loads_onboarding_vars():
