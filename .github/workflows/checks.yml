@@ -25,7 +25,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
@@ -48,10 +48,31 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
-          python-version: "3.12"
+          python-version-file: .python-version
           cache: pip
           cache-dependency-path: requirements-dev.txt
       - name: Install tooling
         run: python -m pip install -r requirements-dev.txt
+      - name: pytest
+        run: pytest
+
+  pytest-ansible-core-2-21:
+    # The playbook runs with ansible-core 2.21 on SURF ResearchCloud; keep the templates,
+    # filter plugins and tests working there too. ansible-core 2.22 needs Python >= 3.13.
+    name: pytest (ansible-core 2.21, Python 3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install tooling with ansible-core 2.21
+        run: |
+          grep -v '^ansible-core' requirements-dev.txt > "$RUNNER_TEMP/requirements-compat.txt"
+          python -m pip install -r "$RUNNER_TEMP/requirements-compat.txt" 'ansible-core~=2.21.6'
       - name: pytest
         run: pytest
