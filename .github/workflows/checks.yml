@@ -57,9 +57,9 @@ jobs:
         run: pytest
 
   pytest-ansible-core-2-21:
-    # The playbook runs with ansible-core 2.21 on SURF ResearchCloud; keep the templates,
+    # SURF ResearchCloud runs the playbook with Ansible 14.6.0 (ansible-core 2.21.6); keep the templates,
     # filter plugins and tests working there too. ansible-core 2.22 needs Python >= 3.13.
-    name: pytest (ansible-core 2.21, Python 3.12)
+    name: "pytest (SRC Ansible 14.6.0: ansible-core 2.21, Python 3.12)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1

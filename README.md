@@ -61,37 +61,77 @@ Remote Pulsar servers can also be connected over a message queue (`src_galaxy_pu
 
 If you attach additional networked storage to the workspace, you can set `src_galaxy_storage_path` to a path on that storage volume. If your storage is e.g. called "galaxy storage", set the parameter to: `/data/galaxy_storage/datadir`. In theory, this should allow you to re-use datasets, tools, etc. from previous Galaxy workspaces.
 
-## ResearchCloud parameters
+## SURF ResearchCloud catalog item
 
-The playbook runs its modules with the workspace's system Python (`ansible_python_interpreter: /usr/bin/python3`), not SRC's Ansible venv, which `become_user` tasks cannot execute; module dependencies are installed with apt.
+What a ResearchCloud (SRC) component and catalog item for this playbook need, so a new one works the first time.
 
-The component takes the following parameters:
+### Component
 
-* `src_galaxy_version`: String. Galaxy release to install, e.g. `26.1` (default) or `26.0`; deploys the `release_<version>` branch.
-* `src_galaxy_api_exposed`: Boolean. if `true` (default), the `/api` route does not require authentication via Single Sign-On.
-* `src_ibridges`: Boolean (default: `true`). Whether to enable support for the [iBridges](https://github.com/UtrechtUniversity/galaxy-tools-ibridges) tool for connecting to Yoda and iRODS instances. Implies `src_galaxy_bootstrap`, and adds iBridges to the list of tools to be installed automatically. To use the interactive iBridges tool, don't forget to enable interactive tools as well.
-* `src_galaxy_jobs_default`: String. What runner to use for jobs by default. Valid values: `singularity`, `docker`, `local`. Default: `singularity`.
-* `src_galaxy_interactive_tools`: if `true` (default), support for [interactive tools](https://docs.galaxyproject.org/en/master/admin/special_topics/interactivetools.html) is enabled.
-* `src_galaxy_co_admin_group`: String group corresponding to an SRAM group. Members of this SRAM group will be made Galaxy admin users.
-* `src_galaxy_bootstrap`: Boolean. Also see [below](#bootstrapping). If `true` (default), will attempt to install workflows, dataproviders and tools as configured by the following options:
-    * `src_galaxy_tool_files`: String of comma-separated paths to YAML files (in this repo) containing tool specifications.
-    * `src_galaxy_workflow_files`: String of comma-separated paths to `.ga` files (in this repo) containing workflow specifications.
-    * `src_galaxy_custom_repo`: String URL to a git repo containing workflow files (in the `workflows` dir of the root of the repo) and tool specification files (in the `tools` dir). Example repo:
-    * `src_galaxy_custom_repo_branch`: String branch of the custom repo to be used.
-* `src_galaxy_storage_path`: String filepath. Default: `/srv/galaxy/datadir`. Path where Galaxy's "mutable data directory" will be located. If you attach additional networked storage to the workspace, you can set `src_galaxy_storage_path` to a path on that storage volume. If your storage is e.g. called "galaxy storage", set the parameter to: `/data/galaxy_storage/datadir`. In theory, this should allow you to re-use datasets, tools, etc. from previous Galaxy workspaces.
-* `src_galaxy_enable_tus`: Boolean. If true, enable support for performant and resumable uploads using [tusd](https://training.galaxyproject.org/training-material/topics/admin/tutorials/tus/tutorial.html).
-* `src_galaxy_cvmfs`: Boolean. If true, loads references data from [CVMFS](https://training.galaxyproject.org/training-material/topics/admin/tutorials/cvmfs/tutorial.html).
-* `src_galaxy_brand`: String. Brand name to display in the Galaxy webinterface.
-* `src_galaxy_byoc_pulsar`: Boolean (default: `false`). **Experimental.** Show the "Bring your own Pulsar" form (RabbitMQ username/password, maximum cores and memory, minimum/maximum GPUs) in the user preferences. Its section and field names and types are the same as on usegalaxy.eu (the password is a `password` input). The values are only stored; an administrator adds the endpoint with an [onboarding PR](#onboarding-a-byoc-pulsar-via-pr). The form tells users that their Pulsar gets jobs after the merge, within about `src_galaxy_cd_interval` minutes when continuous deployment (`src_galaxy_cd`) is on, otherwise after the next deployment.
-* `src_galaxy_rabbitmq`: Boolean (default: `false`). Install a RabbitMQ message broker on the Galaxy host, so remote Pulsar servers can connect to Galaxy over AMQPS. See [RabbitMQ](#rabbitmq-for-remote-pulsar-servers).
-* `src_galaxy_rabbitmq_port`: Integer (default: `5671`). TCP port of the AMQPS listener. Open it in the workspace's security group. Must be 1–65535 and not `5672`, `4369`, `25672`, `80`, `443` or `8080`; the playbook fails otherwise.
-* `src_galaxy_pulsar_amqp_configs`: String (default: empty). Remote Pulsar servers that connect to Galaxy's RabbitMQ, in the same format as `src_galaxy_pulsar_configs`, e.g. `[{name: hpc, label: Our HPC cluster, docker_enabled: true}]`. Requires `src_galaxy_rabbitmq: true`. See [Pulsar over AMQP](#pulsar-over-amqp) for the keys.
-* `src_galaxy_vault_password`: Secret string (default: empty). Ansible Vault password of `secret_group_vars/*.yml`. Written to `/etc/galaxy/vault_password` (`root:root 0600`). Needed when `secret_group_vars/` holds files and `src_galaxy_rabbitmq` is `true`. See [Onboarding a BYOC Pulsar via PR](#onboarding-a-byoc-pulsar-via-pr).
+* **Repository**: `https://github.com/mirelaminkova/src-component-galaxy-amqp`, branch `main`.
+* **Playbook**: `galaxysrv.yml`.
+* **External plugin** `remote_ansible_version`: `14.6.0`. This Ansible release ships ansible-core 2.21.6, the oldest ansible-core the playbook supports (CI runs the tests with it in the job `pytest (SRC Ansible 14.6.0: ansible-core 2.21, Python 3.12)`). Older releases such as `9.1.0` (ansible-core 2.16) are not supported.
+* **Base OS**: Ubuntu 24.04. ansible-core 2.21 needs Python ≥ 3.12 on the workspace, and Ubuntu 24.04's `python3` is 3.12 (Ubuntu 22.04 has 3.10). The RabbitMQ setup is also tested end to end on 24.04 only (see [RabbitMQ](#rabbitmq-for-remote-pulsar-servers)).
+* **Python on the workspace**: the playbook runs its modules with the system Python (`ansible_python_interpreter: /usr/bin/python3`), not the external plugin's Ansible venv, which `become_user` tasks cannot execute; module dependencies are installed with apt.
+* The workspace also needs the SURF Nginx component (see [Prerequisites](#prerequisites)), which provides `workspace_fqdn` and the TLS certificate.
 
-* `src_galaxy_cd`: Boolean (default: `false`). Apply changes merged to `src_galaxy_cd_branch` (e.g. BYOC onboarding PRs) to the running workspace with an `ansible-pull` timer. See [Continuous deployment](#continuous-deployment).
-* `src_galaxy_cd_repo`: String (default: `https://github.com/mirelaminkova/src-component-galaxy-amqp.git`). Repository galaxy-cd pulls. A private repository needs an SSH URL (`git@github.com:org/repo.git`) and a deploy key, see below.
-* `src_galaxy_cd_branch`: String (default: `main`). Branch galaxy-cd applies.
-* `src_galaxy_cd_interval`: Minutes, or a systemd time span such as `30min` or `2h` (default: `15`). Time between the end of one galaxy-cd run and the start of the next.
+### Access rules
+
+| Protocol | Direction | Port | Source | Mutable | Why |
+|----------|-----------|------|--------|---------|-----|
+| tcp | in | 22 | as today | as today | SSH |
+| tcp | in | 80 | as today | as today | HTTP (certificate requests, redirect to HTTPS) |
+| tcp | in | 443 | as today | as today | Galaxy (HTTPS) |
+| tcp | in | 5671 (= `src_galaxy_rabbitmq_port`) | `0.0.0.0/0` | no | AMQPS for remote Pulsar servers |
+
+Port 5671 is needed only with `src_galaxy_rabbitmq: true`. The SRC catalog item form cannot mark this rule mutable, so it is fixed at `0.0.0.0/0`. That is acceptable for BYOC: Pulsars connect from addresses that are not known when the catalog item is made, and access is protected by TLS plus a separate RabbitMQ user and vhost per Pulsar. In detail: it only speaks TLS (1.2/1.3), the `guest` user is removed, the `galaxy` user is accepted from the host itself only, each Pulsar has its own user and password with permissions on its own vhost only, and the management plugin, Erlang port mapper and distribution port are not reachable from outside.
+
+### `co_passwordless_sudo`
+
+Recommended: `co_passwordless_sudo: false`. The playbook already gives the members of `src_galaxy_co_admin_group` sudo with their SRAM TOTP (see [Logging in via SSH](#logging-in-via-ssh)). With `true`, every member of the CO gets passwordless root, and with it the RabbitMQ passwords (`/etc/galaxy-rabbitmq/`), `job_conf.yml` (which holds the `galaxy` RabbitMQ password), the Vault password (`/etc/galaxy/vault_password`) and the saved CD secrets.
+
+### Component parameters
+
+SRC passes every parameter as a string; booleans are `true`/`false`. An empty initial value means the playbook's default (given in the description) applies.
+
+| Parameter key | (Initial) value | Overwritable | Required | Description |
+|---------------|-----------------|--------------|----------|-------------|
+| `src_galaxy_version` | `26.1` | yes | no | Galaxy release to install; deploys the `release_<version>` branch. Default `26.1`; `26.0` also works. |
+| `src_galaxy_brand` | `SURF ResearchCloud` | yes | no | Brand name shown in the Galaxy web interface. Default `SURF ResearchCloud`. |
+| `src_galaxy_api_exposed` | `true` | yes | no | If `true` (default), the `/api` route does not require SRAM Single Sign-On, so API keys work from outside (needed by the onboarding pipeline). With `false`, `/api` is behind SRAM like the rest of Galaxy. |
+| `src_galaxy_co_admin_group` | `src_co_admin` | no | no | SRAM group whose members become Galaxy admins and may `sudo` (with TOTP). Default `src_co_admin`. |
+| `src_galaxy_jobs_default` | `singularity` | yes | no | Default job destination: `singularity` (default), `docker` or `local`. Other values fall back to `singularity`. |
+| `src_galaxy_interactive_tools` | `true` | yes | no | Enable path-based [interactive tools](#interactive-tools) (installs Docker). Default `false`. |
+| `src_galaxy_enable_tus` | `true` | yes | no | Resumable uploads with [tusd](https://training.galaxyproject.org/training-material/topics/admin/tutorials/tus/tutorial.html). Default `true`. |
+| `src_galaxy_cvmfs` | `true` | yes | no | Reference data from [CVMFS](https://training.galaxyproject.org/training-material/topics/admin/tutorials/cvmfs/tutorial.html). Default `true`. |
+| `src_galaxy_storage_path` | (empty) | yes | no | Galaxy's mutable data directory. Default `/srv/galaxy/datadir`. On attached storage called "galaxy storage", e.g. `/data/galaxy_storage/datadir`; see [external storage](#usability-of-external-storage). |
+| `src_galaxy_bootstrap` | `false` | yes | no | Install the tools and workflows below at deployment (see [Bootstrapping](#bootstrapping)). Default `false`. |
+| `src_ibridges` | `true` | yes | no | Add the [iBridges](https://github.com/UtrechtUniversity/galaxy-tools-ibridges) tool (`tools/ibridges.yml`) to the tools installed by bootstrapping. Default `true`. |
+| `src_galaxy_tool_files` | (empty) | yes | no | Comma-separated tool files in this repository, e.g. `tools/ibridges.yml,tools/foo.yml`. Used when bootstrapping. |
+| `src_galaxy_workflow_files` | (empty) | yes | no | Comma-separated `.ga` workflow files in this repository. Used when bootstrapping; installed as public workflows. |
+| `src_galaxy_custom_repo` | (empty) | yes | no | Git repository with `tools/` and `workflows/` to install when bootstrapping, e.g. `https://github.com/dometto/galaxy-custom-tools-test.git`. |
+| `src_galaxy_custom_repo_branch` | `main` | yes | no | Branch of `src_galaxy_custom_repo`. Default `main`. |
+| `src_galaxy_pulsar_configs` | (empty) | yes | no | Remote Pulsar servers reached over REST, as a flow-style list, e.g. `[{name: hpc, url: https://pulsar.example.org:8913/, private_token: <token>, label: Our HPC, docker_enabled: true}]`. Keys include `url` (required), `private_token`, `name` (default derived from the URL), `label`, `docker_enabled`, `singularity_enabled`, `dependency_resolution`, `manager`, `jobs_directory`. Leave empty for no REST Pulsar: any placeholder creates a fake Pulsar. A `private_token` makes CD store it encrypted, which needs `src_galaxy_vault_password`. |
+| `src_galaxy_pulsar_tool_mappings` | (empty) | yes | no | Tools that always run on one TPV destination, e.g. `[{tool_id: bowtie2, environment: remote_hpc_basic}]`. `environment` is a TPV destination name: `local`, `docker`, `singularity`, `remote_<name>_basic`, `remote_<name>` (Docker, REST Pulsar with `docker_enabled`) or `amqp_<name>`. Applied only when a Pulsar is configured; an unknown `environment` fails the deployment at "Invalid Pulsar configuration". Leave empty for none. |
+| `src_galaxy_pulsar_amqp_configs` | (empty) | yes | no | Remote Pulsar servers that connect to Galaxy's RabbitMQ, e.g. `[{name: hpc, label: Our HPC cluster, docker_enabled: true}]`. Needs `src_galaxy_rabbitmq: true`. Keys: see [Pulsar over AMQP](#pulsar-over-amqp). |
+| `src_galaxy_byoc_pulsar` | `true` | no | no | Show the "Bring your own Pulsar" form in the user preferences (see [Onboarding a BYOC Pulsar via PR](#onboarding-a-byoc-pulsar-via-pr)). Default `false`. Experimental. |
+| `src_galaxy_rabbitmq` | `true` | no | no | Install RabbitMQ (AMQPS) for remote Pulsars and load the BYOC onboarding files. Default `false`. See [RabbitMQ](#rabbitmq-for-remote-pulsar-servers). |
+| `src_galaxy_rabbitmq_port` | `5671` | no | no | AMQPS port; must match the access rule. 1–65535, not `5672`, `4369`, `25672`, `80`, `443` or `8080`. Default `5671`. |
+| `src_galaxy_vault_password` | (empty, secret) | no | no | Secret parameter: Ansible Vault password of `secret_group_vars/*.yml`, written to `/etc/galaxy/vault_password` (`root:root 0600`). Required once `secret_group_vars/` holds files and `src_galaxy_rabbitmq` is `true` (after the first BYOC onboarding), and for CD when a parameter holds a secret. Never committed. |
+| `src_galaxy_cd` | `true` | yes | no | Apply changes merged to `src_galaxy_cd_branch` (BYOC onboarding PRs) to the running workspace with an `ansible-pull` timer. Default `false`. Whoever can merge to that branch has root on the workspace; see [Continuous deployment](#continuous-deployment). |
+| `src_galaxy_cd_repo` | `https://github.com/mirelaminkova/src-component-galaxy-amqp.git` | no | no | Repository CD pulls (default as shown). A private repository needs an SSH URL and a deploy key. |
+| `src_galaxy_cd_branch` | `main` | no | no | Branch CD applies. Default `main`. |
+| `src_galaxy_cd_interval` | `15` | yes | no | Minutes, or a systemd time span such as `30min`, between the end of one CD run and the start of the next. Default `15`. |
+
+Keep `workspace_fqdn` as SRC (the Nginx component) provides it; the playbook uses it for Galaxy's URL and the RabbitMQ certificate.
+
+### Changes from the old component
+
+* Remove `src_galaxy_pulsar_relay_configs`: the playbook does not read it. Pulsars that cannot accept inbound connections use `src_galaxy_pulsar_amqp_configs` or a BYOC onboarding PR.
+* `src_galaxy_pulsar_tool_mappings`: `environment` values are now TPV destination names (`local`, `docker`, `singularity`, `remote_<name>_basic`, `remote_<name>`, `amqp_<name>`).
+* `src_galaxy_pulsar_configs` and `src_galaxy_pulsar_tool_mappings` start empty. Placeholders such as `https://REPLACE` or `your_pulsar_env` create a fake Pulsar and fail the deployment at "Invalid Pulsar configuration".
+* The default `src_galaxy_version` is `26.1`.
+* New parameters: `src_galaxy_pulsar_amqp_configs`, `src_galaxy_vault_password` (secret), `src_galaxy_cd`, `src_galaxy_cd_repo`, `src_galaxy_cd_branch` and `src_galaxy_cd_interval`.
+* `remote_ansible_version` `14.6.0` (was `9.1.0`), base OS Ubuntu 24.04, access rule tcp 5671 in from `0.0.0.0/0` (not mutable), and `co_passwordless_sudo: false`.
 
 ## Bootstrapping
 
@@ -152,7 +192,7 @@ Because we cannot acquire SSL certificates for a wildcard subdomain on ResearchC
 
 With `src_galaxy_rabbitmq: true` the playbook installs RabbitMQ from Ubuntu's `rabbitmq-server` package (see [tasks/rabbitmq.yml](tasks/rabbitmq.yml)). Remote Pulsar servers then connect *to* Galaxy's broker, so they do not need an open inbound port themselves.
 
-* **Firewall**: open TCP `src_galaxy_rabbitmq_port` (default `5671`) in the SRC workspace's security group, ideally only for the Pulsar servers' addresses. No other RabbitMQ port has to be opened.
+* **Firewall**: open TCP `src_galaxy_rabbitmq_port` (default `5671`) in the SRC workspace's security group (see [Access rules](#access-rules): from `0.0.0.0/0` in the catalog item). No other RabbitMQ port has to be opened.
 * **Listeners**: AMQPS on `src_galaxy_rabbitmq_port` (TLS 1.2/1.3, no client certificates). Plain AMQP on `127.0.0.1:5672` only, for Galaxy itself. The Erlang port mapper (`epmd`, 4369) and the Erlang distribution port (25672) are bound to `127.0.0.1`, and the node is named `rabbit@localhost`. The management plugin is disabled.
 * **TLS certificate**: the certificate of the SRC Nginx plugin (acme.sh, `/etc/ssl/acme/<fqdn>/`, or certbot, `/etc/letsencrypt/live/<fqdn>/`; see [tasks/tls_facts.yml](tasks/tls_facts.yml)) is copied to `/etc/rabbitmq/tls/` with the key readable by the `rabbitmq` group only (`root:rabbitmq 0640`). The original key's permissions are not changed. The playbook fails if no certificate is found. Renewed certificates are **not** picked up automatically: re-run the playbook (it copies the new files and restarts RabbitMQ), or restart `rabbitmq-server` after copying them.
 * **Users**: the default `guest` user is removed. A `galaxy` user without management tags is created. Each user's password is generated once and stored in `/etc/galaxy-rabbitmq/<user>.pass` (`root:root 0600`, directory `0700`), so re-runs keep the same passwords. Passwords are never put on a command line (which every local account can read with `ps`): they are passed to `rabbitmqctl add_user`/`change_password` on stdin, and only when the user is missing or its `.pass` file was just created. To rotate a password, delete its `.pass` file and re-run the playbook. A password changed by hand in RabbitMQ is not detected. Tasks that read or set passwords also use `no_log`, which keeps them out of Ansible's output.
