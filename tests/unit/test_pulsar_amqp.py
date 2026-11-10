@@ -255,16 +255,15 @@ def test_galaxy_config_files_are_not_world_readable():
 JOB_CONF_VARS = {
     "galaxy_mutable_data_dir": "/srv/galaxy/datadir",
     "apptainer_volumes": [],
-    "_galaxy_default_dispatcher": "default_dispatcher",
+    "_galaxy_tpv_config_dir": "/srv/galaxy/config/tpv",
     "_galaxy_rabbitmq_passwords": PASSWORDS,
 }
 JOB_CONF_NAMES = [
     "_galaxy_use_interactive_tools",
-    "_galaxy_use_dispatcher",
     "_galaxy_jobs_default",
     "_galaxy_has_pulsar",
     "_galaxy_pulsar_configs_raw",
-    "_galaxy_pulsar_tool_mappings",
+    "_galaxy_tpv_tool_mappings",
     "_galaxy_pulsar_amqp_configs",
     "_galaxy_rabbitmq_local_port",
     "_galaxy_infrastructure_url",
@@ -281,11 +280,17 @@ def _job_conf(**params):
     return yaml.safe_load(_job_conf_text(**params))
 
 
+def _tpv_destinations(**params):
+    resolve = _resolve(**params)
+    variables = {**JOB_CONF_VARS, **{name: resolve(name) for name in JOB_CONF_NAMES}}
+    return render_yaml("files/galaxy/tpv/destinations.yml.j2", variables)["destinations"]
+
+
 def test_no_amqp_configs_render_no_mq_runner():
     conf = _job_conf()
 
     assert [r for r in conf["runners"] if r.startswith("pulsar_mq_")] == []
-    assert [e for e in conf["execution"]["environments"] if e.startswith("amqp_")] == []
+    assert [d for d in _tpv_destinations() if d.startswith("amqp_")] == []
     assert "PulsarMQJobRunner" not in _job_conf_text()
 
 
@@ -307,21 +312,25 @@ def test_one_mq_runner_per_pulsar():
     assert "pulsar" not in runners  # no REST runner without src_galaxy_pulsar_configs
 
 
-def test_one_environment_per_pulsar():
-    environments = _job_conf(src_galaxy_pulsar_amqp_configs=TWO)["execution"]["environments"]
+def test_one_tpv_destination_per_pulsar():
+    destinations = _tpv_destinations(src_galaxy_pulsar_amqp_configs=TWO)
 
-    assert environments["amqp_hpc"] == {
+    assert destinations["amqp_hpc"] == {
         "runner": "pulsar_mq_hpc",
-        "jobs_directory": "/mnt/pulsar/files/staging",
-        "default_file_action": "remote_transfer",
-        "dependency_resolution": "remote",
-        "rewrite_parameters": True,
-        "remote_metadata": False,
-        "outputs_to_working_directory": False,
-        "docker_enabled": True,
-        "singularity_enabled": False,
+        "params": {
+            "jobs_directory": "/mnt/pulsar/files/staging",
+            "default_file_action": "remote_transfer",
+            "dependency_resolution": "remote",
+            "rewrite_parameters": True,
+            "remote_metadata": False,
+            "outputs_to_working_directory": False,
+            "docker_enabled": True,
+            "singularity_enabled": False,
+        },
+        "scheduling": {"require": ["hpc-pulsar"]},
     }
-    assert environments["amqp_eu"]["docker_enabled"] is False
+    assert destinations["amqp_eu"]["params"]["docker_enabled"] is False
+    assert destinations["amqp_eu"]["scheduling"] == {"require": ["eu-pulsar"]}
 
 
 def test_only_the_galaxy_password_is_in_job_conf():
@@ -333,28 +342,36 @@ def test_only_the_galaxy_password_is_in_job_conf():
 
 
 def test_amqp_and_rest_pulsars_together():
-    conf = _job_conf(
+    params = {
+        "src_galaxy_pulsar_amqp_configs": TWO,
+        "src_galaxy_pulsar_configs": "[{name: rest, url: https://r.example.org, private_token: t}]",
+    }
+
+    assert {"pulsar", "pulsar_mq_hpc", "pulsar_mq_eu"} <= set(_job_conf(**params)["runners"])
+    assert {"remote_rest_basic", "amqp_hpc", "amqp_eu"} <= set(_tpv_destinations(**params))
+
+
+def test_rest_and_amqp_pulsars_must_not_share_a_tag():
+    resolve = _resolve(
         src_galaxy_pulsar_amqp_configs=TWO,
-        src_galaxy_pulsar_configs="[{name: rest, url: https://r.example.org, private_token: t}]",
+        src_galaxy_pulsar_configs="[{name: hpc, url: https://h.example.org, private_token: t}]",
     )
 
-    assert {"pulsar", "pulsar_mq_hpc", "pulsar_mq_eu"} <= set(conf["runners"])
-    assert {"remote_rest_basic", "amqp_hpc", "amqp_eu"} <= set(conf["execution"]["environments"])
+    assert resolve("_galaxy_tpv_config_errors") == [
+        "Pulsar tag hpc-pulsar is used by more than one of src_galaxy_pulsar_configs /"
+        " src_galaxy_pulsar_amqp_configs (names must differ)"
+    ]
 
 
-def test_tool_mappings_may_target_amqp_environments():
-    conf = _job_conf(
+def test_tool_mappings_may_target_amqp_destinations():
+    resolve = _resolve(
         src_galaxy_pulsar_amqp_configs=TWO,
         src_galaxy_pulsar_tool_mappings="[{tool_id: bwa, environment: amqp_hpc}]",
     )
 
-    assert {"id": "bwa", "environment": "amqp_hpc"} in conf["tools"]
-
-
-def test_tool_mappings_without_any_pulsar_are_ignored():
-    conf = _job_conf(src_galaxy_pulsar_tool_mappings="[{tool_id: bwa, environment: amqp_hpc}]")
-
-    assert conf["tools"] == [{"class": "local", "environment": "local"}]
+    assert resolve("_galaxy_tpv_tool_mappings") == [
+        {"tool_id": "bwa", "environment": "amqp_hpc", "tag": "hpc-pulsar"}
+    ]
 
 
 # --- user preferences and routing ------------------------------------------------
@@ -367,17 +384,16 @@ def test_amqp_pulsars_are_remote_destinations_after_rest_ones():
     )
 
     assert resolve("_galaxy_remote_destinations") == [
-        {"id": "remote_rest_basic", "label": "r.example.org"},
-        {"id": "amqp_hpc", "label": "Our HPC"},
-        {"id": "amqp_eu", "label": "eu"},
+        {"id": "remote_rest_basic", "label": "r.example.org", "tag": "rest-pulsar"},
+        {"id": "amqp_hpc", "label": "Our HPC", "tag": "hpc-pulsar"},
+        {"id": "amqp_eu", "label": "eu", "tag": "eu-pulsar"},
     ]
-    assert resolve("_galaxy_use_dispatcher") is True
 
 
-def test_every_amqp_destination_is_a_job_conf_environment_and_in_the_dropdown():
+def test_every_amqp_destination_is_a_tpv_destination_and_its_tag_in_the_dropdown():
     resolve = _resolve(src_galaxy_pulsar_amqp_configs=TWO)
     destinations = resolve("_galaxy_remote_destinations")
-    conf = _job_conf(src_galaxy_pulsar_amqp_configs=TWO)
+    tpv = _tpv_destinations(src_galaxy_pulsar_amqp_configs=TWO)
     prefs = render_yaml(
         "galaxy/config/user_preferences_extra_conf.yml.j2",
         {
@@ -388,12 +404,11 @@ def test_every_amqp_destination_is_a_job_conf_environment_and_in_the_dropdown():
     )
     options = prefs["preferences"]["distributed_compute"]["inputs"][0]["options"]
 
-    assert conf["execution"]["default"] == "default_dispatcher"
+    assert _job_conf(src_galaxy_pulsar_amqp_configs=TWO)["execution"]["default"] == "tpv_dispatcher"
     for destination in destinations:
-        assert conf["execution"]["environments"][destination["id"]]["runner"].startswith(
-            "pulsar_mq_"
-        )
-        assert [destination["label"], destination["id"]] in options
+        assert tpv[destination["id"]]["runner"].startswith("pulsar_mq_")
+        assert tpv[destination["id"]]["scheduling"] == {"require": [destination["tag"]]}
+        assert [destination["label"], destination["tag"]] in options
 
 
 def test_rabbitmq_module_dependencies_are_installed():

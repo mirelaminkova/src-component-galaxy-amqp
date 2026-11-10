@@ -47,7 +47,13 @@ on the Galaxy machine won't have access to this secret key, they cannot directly
 
 A Galaxy machine can be connected to Pulsar inside the SRC, following the [SRC component Pulsar](https://github.com/ErasmusMC-Bioinformatics/src-component-pulsar) instructions.
 
-When at least one Pulsar destination is configured (`src_galaxy_pulsar_configs`), users get a **Use distributed compute resources** select in their preferences (User → Preferences → Manage information). It lists "default - Galaxy will decide where to put your job" plus one entry per destination, labelled with the config's `label` key or else the host of its `url`. Jobs of a user who picked a destination are sent there by the `default_dispatcher` job rule, which is then `execution.default` in `job_conf.yml`. Some jobs always keep their normal destination: jobs of anonymous users, interactive tools (Docker), uploads (`upload1`, `__DATA_FETCH__`), data sources, data managers, user-defined tools, expression and other Galaxy-internal tools, and tools pinned by `src_galaxy_pulsar_tool_mappings`. A choice whose destination no longer exists falls back to the default.
+Jobs are routed by [TPV (total-perspective-vortex)](https://total-perspective-vortex.readthedocs.io/), in the same layout and with the same tag conventions as [usegalaxy.eu's infrastructure-playbook](https://github.com/usegalaxy-eu/infrastructure-playbook): `files/galaxy/tpv/tool_defaults.yml.j2` (rules) and `files/galaxy/tpv/destinations.yml.j2` (destinations) are rendered to `{{ galaxy_config_dir }}/tpv/`, and `job_conf.yml` sends every job to the `tpv_dispatcher`. Without Pulsar, every job goes to the default destination (`src_galaxy_jobs_default`), except interactive tools, which run in Docker.
+
+When at least one Pulsar destination is configured (`src_galaxy_pulsar_configs` or `src_galaxy_pulsar_amqp_configs`), users get a **Use distributed compute resources** select in their preferences (User → Preferences → Manage information). It lists "default - Galaxy will decide where to put your job" plus one entry per destination, labelled with the config's `label` key or else the host of its `url` (REST) or its `name` (AMQP). The stored value is the destination's TPV scheduling tag, `<name>-pulsar`, and the TPV rule `remote_resources` requires that tag for the user's jobs. Some jobs always keep their normal destination: jobs of anonymous users, interactive tools (Docker), uploads (`upload1`, `__DATA_FETCH__`), set metadata, data sources, data managers, user-defined tools, expression and other Galaxy-internal tools (tag `internal`), and tools pinned by `src_galaxy_pulsar_tool_mappings` (their `environment` names a TPV destination: `local`, `docker`, `singularity`, `remote_<name>_basic`, `remote_<name>` or `amqp_<name>`).
+
+A choice that no destination offers any more (a removed or unknown Pulsar) fails the user's jobs with a message asking them to pick another one in their preferences, as on usegalaxy.eu, rather than silently running the job somewhere the user did not choose. When the Galaxy has no Pulsar destinations at all, the choice is ignored, because the select is not shown then and users could not change it.
+
+BYOC onboarding pull requests (usegalaxy.eu format) add `pulsar_<id>_tpv` destinations (`inherits: pulsar_default`, `scheduling.require: [<id>-pulsar]`) in the marked section at the end of `files/galaxy/tpv/destinations.yml.j2`.
 
 Remote Pulsar servers can also be connected over a message queue (`src_galaxy_pulsar_amqp_configs`, Galaxy's `PulsarMQJobRunner`), so that the Pulsar server needs no inbound port; see [Pulsar over AMQP](#pulsar-over-amqp). These destinations appear in the same select.
 
@@ -122,11 +128,10 @@ Galaxy has support for so-called [interactive tools](https://docs.galaxyproject.
 
 * Docker is installed
 * Docker tools are enabled in `job_config.yml`
-* A special Python script is used to determine whether a particular tool should be run as a Docker job.
+* The TPV rule `interactive_tool` (`files/galaxy/tpv/tool_defaults.yml.j2`) sends tools to the Docker destination:
   * any tools that are of the kind `'interactive'` are sent to Docker
   * __note__: this means that if an admin installs an interactive tool, it will automatically be configured *as* an interactive tool -- so admins should make sure that tools they install can securely be run as interactive tools.
   * other tools are sent to the default job destination (configured by `src_galaxy_jobs_default`)
-  * see [templates/default_dispatch.py.j2]
 
 __Note__: Galaxy supporst two kinds of interactive tools:
 
@@ -180,8 +185,8 @@ Invalid entries (bad or duplicate names, unknown keys, bad values) fail the play
 For each entry `<name>` the playbook creates:
 
 * RabbitMQ vhost `/pulsar/<name>` and user `<name>` with permissions on that vhost only; the `galaxy` user gets permissions on it too.
-* Job runner `pulsar_mq_<name>` (`PulsarMQJobRunner`, `amqp_url` with the `galaxy` user over `127.0.0.1:5672`, `galaxy_url` = the workspace URL, `manager`, message acknowledgement with republishing after 1200 s, `amqp_consumer_timeout: 2.0`, publish retries) and job environment `amqp_<name>` (`remote_transfer` file staging, `rewrite_parameters`, no remote metadata). One runner per Pulsar is needed because a runner serves exactly one `amqp_url` (vhost).
-* An entry `amqp_<name>` in the users' **Use distributed compute resources** select. `src_galaxy_pulsar_tool_mappings` may also map tools to `amqp_<name>`.
+* Job runner `pulsar_mq_<name>` (`PulsarMQJobRunner`, `amqp_url` with the `galaxy` user over `127.0.0.1:5672`, `galaxy_url` = the workspace URL, `manager`, message acknowledgement with republishing after 1200 s, `amqp_consumer_timeout: 2.0`, publish retries) and TPV destination `amqp_<name>` (`remote_transfer` file staging, `rewrite_parameters`, no remote metadata; scheduling tag `<name>-pulsar`). One runner per Pulsar is needed because a runner serves exactly one `amqp_url` (vhost).
+* An entry `<name>-pulsar` in the users' **Use distributed compute resources** select. `src_galaxy_pulsar_tool_mappings` may also map tools to `amqp_<name>`. A REST Pulsar (`src_galaxy_pulsar_configs`) and an AMQP Pulsar must not share a name (both would get the tag `<name>-pulsar`).
 * `/etc/galaxy-rabbitmq/pulsar_<name>.txt` (`root:root 0600`): the settings to paste into that Pulsar's `app.yml`, including its password.
 
 The Pulsar server needs network access to `<workspace_fqdn>:<src_galaxy_rabbitmq_port>` (AMQPS) and to Galaxy's HTTPS URL (it fetches inputs and uploads outputs there), and the `kombu` Python package. Its `app.yml` then contains, for example:

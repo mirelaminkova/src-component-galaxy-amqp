@@ -12,8 +12,12 @@ BASE_VARS = {
     "_galaxy_byoc_pulsar": False,
 }
 REMOTES = [
-    {"id": "remote_hpc_basic", "label": "HPC cluster"},
-    {"id": "remote_pulsar-example-org-_basic", "label": 'It\'s a "quoted": label'},
+    {"id": "remote_hpc_basic", "label": "HPC cluster", "tag": "hpc-pulsar"},
+    {
+        "id": "remote_pulsar-example-org-_basic",
+        "label": 'It\'s a "quoted": label',
+        "tag": "pulsar-example-org--pulsar",
+    },
 ]
 DEFAULT_OPTION = ["default - Galaxy will decide where to put your job", "None"]
 
@@ -26,7 +30,8 @@ def test_no_remote_destinations_means_no_distributed_compute_form():
     assert "distributed_compute" not in _prefs()
 
 
-def test_distributed_compute_lists_default_then_each_remote_destination():
+def test_distributed_compute_lists_default_then_each_remote_destination_tag():
+    """The values are TPV scheduling tags (`<name>-pulsar`), as on usegalaxy.eu."""
     form = _prefs(_galaxy_remote_destinations=REMOTES)["distributed_compute"]
 
     assert form["description"] == "Use distributed compute resources"
@@ -36,13 +41,13 @@ def test_distributed_compute_lists_default_then_each_remote_destination():
     assert select["required"] is False
     assert select["options"] == [
         DEFAULT_OPTION,
-        ["HPC cluster", "remote_hpc_basic"],
-        ['It\'s a "quoted": label', "remote_pulsar-example-org-_basic"],
+        ["HPC cluster", "hpc-pulsar"],
+        ['It\'s a "quoted": label', "pulsar-example-org--pulsar"],
     ]
 
 
 def test_default_option_is_stored_as_the_string_none():
-    """Galaxy stores the option value verbatim; the job rule treats "None" as no choice."""
+    """Galaxy stores the option value verbatim; the TPV rule treats "None" as no choice."""
     form = _prefs(_galaxy_remote_destinations=REMOTES)["distributed_compute"]
 
     assert form["inputs"][0]["options"][0][1] == "None"

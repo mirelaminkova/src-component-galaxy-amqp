@@ -4,7 +4,9 @@ Templates are rendered with plain Jinja2 configured like Ansible's templating
 (``trim_blocks``, kept trailing newline) and with Ansible's own filter plugins
 (``ternary``, ``bool``, ``regex_replace``, ``from_json``, ...) registered, so the
 output matches what the playbook would deploy closely enough to test it.
-Undefined variables raise instead of rendering as empty strings.
+Undefined variables raise instead of rendering as empty strings. Templates under
+``templates/`` are named relative to it (``galaxy/config/job_conf.yml.j2``), others by
+their repository path (``files/galaxy/tpv/destinations.yml.j2``).
 
 Python templates (e.g. Galaxy dynamic job rules) can be rendered into
 ``tests/rendered/`` and imported with :func:`render_module`; that directory is a
@@ -28,7 +30,7 @@ RENDER_DIR = REPO_ROOT / "tests" / "rendered"
 def make_environment() -> jinja2.Environment:
     """Return a Jinja2 environment that mimics Ansible's template module."""
     env = jinja2.Environment(  # noqa: S701 - renders config/code, not HTML
-        loader=jinja2.FileSystemLoader(TEMPLATES_DIR),
+        loader=jinja2.FileSystemLoader([TEMPLATES_DIR, REPO_ROOT]),
         undefined=jinja2.StrictUndefined,
         trim_blocks=True,
         keep_trailing_newline=True,

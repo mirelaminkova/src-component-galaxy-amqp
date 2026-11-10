@@ -40,9 +40,15 @@ pytest enforces 100% branch coverage (`--cov-fail-under=100`, configured in
 
 - `tests/helpers/render.py` renders repo templates with plain Jinja2 set up like
   Ansible (strict undefined variables, `trim_blocks`, Ansible's filter plugins).
-- `render_module()` renders a Python template (e.g. `templates/default_dispatch.py.j2`)
-  into `tests/rendered/` and imports it, so Galaxy dynamic job rules can be unit
-  tested. Rendered modules count towards coverage, so every branch of a rule needs a test.
+- `render_template()` / `render_yaml()` load `templates/<name>` by its relative name and
+  any other template (e.g. `files/galaxy/tpv/destinations.yml.j2`) by its repository path.
+- `render_module()` renders a Python template into `tests/rendered/` and imports it, so
+  Galaxy dynamic job rules can be unit tested. Rendered modules count towards coverage,
+  so every branch of a rule needs a test.
+- `tests/unit/test_tpv.py` renders the TPV config (`files/galaxy/tpv/`) and `job_conf.yml`,
+  runs TPV's own linter (`tpv lint`) and routes jobs with TPV's mapper (what `tpv dry-run`
+  does). TPV and Galaxy's packages (`total-perspective-vortex`, `galaxy-app`) are in
+  `requirements-dev.txt`; their versions match what the playbook deploys.
 - `render_yaml()` renders a YAML template and parses it.
   `tests/unit/test_config_templates.py` renders every `templates/galaxy/config/*.j2`
   and fails if a new config template has no rendering case.
@@ -59,5 +65,6 @@ pytest enforces 100% branch coverage (`--cov-fail-under=100`, configured in
 ### Versions
 
 Tool versions are pinned in `requirements-dev.txt`. The local hooks in
-`.pre-commit-config.yaml` (pytest, ansible-lint, semgrep, ast-grep) repeat those pins; update both
-together. The Molecule scenario (`molecule/`) needs podman and runs in CI only.
+`.pre-commit-config.yaml` (pytest, ansible-lint, ast-grep) repeat those pins; update both
+together. semgrep is pinned only in `.pre-commit-config.yaml`: its dependencies conflict with
+Galaxy's, so it runs from pre-commit's own environment. The Molecule scenario (`molecule/`) needs podman and runs in CI only.

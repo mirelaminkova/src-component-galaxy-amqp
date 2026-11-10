@@ -17,7 +17,8 @@ preferences:
               type: text
 {% endif %}
 {% if _galaxy_remote_destinations | length > 0 %}
-    # Read by the default_dispatcher job rule as "distributed_compute|remote_resources".
+    # Read by the TPV rule `remote_resources` (files/galaxy/tpv/tool_defaults.yml.j2) as
+    # "distributed_compute|remote_resources"; the values are TPV scheduling tags (`<name>-pulsar`).
     distributed_compute:
         description: Use distributed compute resources
         inputs:
@@ -28,7 +29,7 @@ preferences:
               options:
                   - ["default - Galaxy will decide where to put your job", None]
 {% for destination in _galaxy_remote_destinations %}
-                  - {{ [destination.label, destination.id] | to_json }}
+                  - {{ [destination.label, destination.tag] | to_json }}
 {% endfor %}
 {% endif %}
 {% if _galaxy_byoc_pulsar %}

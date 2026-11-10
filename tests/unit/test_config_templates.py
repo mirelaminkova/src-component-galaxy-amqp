@@ -13,28 +13,16 @@ BASE_VARS = {
     "apptainer_volumes": ["$galaxy_root:ro", "$tool_directory:ro", "$working_directory:rw"],
     "_galaxy_ibridges_enabled": True,
     "_galaxy_use_interactive_tools": False,
-    "_galaxy_default_dispatcher": "default_dispatcher",
-    "_galaxy_jobs_default": "singularity",
+    "_galaxy_tpv_config_dir": "/srv/galaxy/config/tpv",
     "_galaxy_has_pulsar": False,
-    "_galaxy_pulsar_configs_raw": [],
-    "_galaxy_pulsar_tool_mappings": [],
-    "_galaxy_use_dispatcher": False,
     "_galaxy_remote_destinations": [],
     "_galaxy_byoc_pulsar": False,
     "_galaxy_pulsar_amqp_configs": [],
 }
 
-REMOTE_DESTINATIONS = [{"id": "remote_byoc_basic", "label": "BYOC 'cluster': \"GPU\""}]
-
-PULSAR_MINIMAL = {"url": "https://pulsar.example.org/", "private_token": "t0ken"}
-PULSAR_FULL = {
-    "name": "byoc",
-    "url": "https://byoc.example.org",
-    "private_token": "t0ken",
-    "docker_enabled": True,
-    "pulsar_root": "/mnt/pulsar",
-    "container_resolvers": [{"type": "explicit"}, {"type": "mulled", "require_container": True}],
-}
+REMOTE_DESTINATIONS = [
+    {"id": "remote_byoc_basic", "label": "BYOC 'cluster': \"GPU\"", "tag": "byoc-pulsar"}
+]
 
 # Every config template must appear here with at least one variable set, so a new
 # template cannot be added without a rendering test.
@@ -53,20 +41,7 @@ CASES = {
     },
     "job_conf.yml.j2": {
         "default": {},
-        "interactive": {"_galaxy_use_interactive_tools": True, "_galaxy_use_dispatcher": True},
-        "pulsar_minimal": {
-            "_galaxy_has_pulsar": True,
-            "_galaxy_pulsar_configs_raw": [PULSAR_MINIMAL],
-        },
-        "pulsar_docker_default_resolvers": {
-            "_galaxy_has_pulsar": True,
-            "_galaxy_pulsar_configs_raw": [{**PULSAR_MINIMAL, "docker_enabled": True}],
-        },
-        "pulsar_full_with_mappings": {
-            "_galaxy_has_pulsar": True,
-            "_galaxy_pulsar_configs_raw": [PULSAR_MINIMAL, PULSAR_FULL],
-            "_galaxy_pulsar_tool_mappings": [{"tool_id": "bwa", "environment": "remote_byoc"}],
-        },
+        "rest_pulsar": {"_galaxy_has_pulsar": True},
     },
 }
 
@@ -92,40 +67,28 @@ def _job_conf(**overrides):
     return render_yaml(f"{CONFIG_DIR}/job_conf.yml.j2", {**BASE_VARS, **overrides})
 
 
-def test_job_conf_default_environment_without_interactive_tools():
-    conf = _job_conf()
+@pytest.mark.parametrize("has_pulsar", [False, True])
+def test_job_conf_routes_every_job_through_tpv(has_pulsar):
+    conf = _job_conf(_galaxy_has_pulsar=has_pulsar)
 
-    assert conf["execution"]["default"] == "singularity"
-    assert "default_dispatcher" not in conf["execution"]["environments"]
-    assert "pulsar" not in conf["runners"]
-
-
-@pytest.mark.parametrize("interactive", [True, False])
-def test_job_conf_routes_through_dispatcher_when_enabled(interactive):
-    conf = _job_conf(_galaxy_use_interactive_tools=interactive, _galaxy_use_dispatcher=True)
-
-    assert conf["execution"]["default"] == "default_dispatcher"
-    assert conf["execution"]["environments"]["default_dispatcher"] == {
+    assert conf["execution"]["default"] == "tpv_dispatcher"
+    assert conf["execution"]["environments"]["tpv_dispatcher"] == {
         "runner": "dynamic",
         "type": "python",
-        "function": "default_dispatcher",
+        "function": "map_tool_to_destination",
+        "rules_module": "tpv.rules",
+        "tpv_config_files": [
+            "/srv/galaxy/config/tpv/tool_defaults.yml",
+            "/srv/galaxy/config/tpv/destinations.yml",
+        ],
     }
+    # Upload, data fetch, ... ("local" class tools) keep running in the local environment.
+    assert conf["tools"] == [{"class": "local", "environment": "local"}]
+    assert set(conf["execution"]["environments"]) == {"local", "tpv_dispatcher"}
 
 
-def test_job_conf_pulsar_environments_and_tool_mappings():
-    conf = _job_conf(
-        _galaxy_has_pulsar=True,
-        _galaxy_pulsar_configs_raw=[PULSAR_MINIMAL, PULSAR_FULL],
-        _galaxy_pulsar_tool_mappings=[{"tool_id": "bwa", "environment": "remote_byoc"}],
-    )
-    environments = conf["execution"]["environments"]
-
-    assert conf["runners"]["pulsar"]["load"] == "galaxy.jobs.runners.pulsar:PulsarRESTJobRunner"
-    assert environments["remote_pulsar-example-org-_basic"]["url"] == PULSAR_MINIMAL["url"]
-    assert "remote_pulsar-example-org-" not in environments
-    assert environments["remote_byoc"]["jobs_directory"] == "/mnt/pulsar/jobs"
-    assert environments["remote_byoc"]["container_resolvers"] == [
-        {"type": "explicit"},
-        {"type": "mulled", "require_container": True},
-    ]
-    assert {"id": "bwa", "environment": "remote_byoc"} in conf["tools"]
+def test_job_conf_rest_runner_only_with_rest_pulsars():
+    assert "pulsar" not in _job_conf()["runners"]
+    assert _job_conf(_galaxy_has_pulsar=True)["runners"]["pulsar"] == {
+        "load": "galaxy.jobs.runners.pulsar:PulsarRESTJobRunner"
+    }

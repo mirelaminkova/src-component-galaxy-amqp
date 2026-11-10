@@ -57,23 +57,65 @@ _galaxy_has_pulsar: "{{ (_galaxy_pulsar_configs_raw | length > 0) | bool }}"
 # src_galaxy_storage_path
 # src_galaxy_version
 
-# --- Pulsar user preferences and preference-based job routing (issue #5) ---
+# --- Pulsar user preferences and TPV job routing (issues #5, #20) ---
 # Remote destinations users can pick under "Use distributed compute resources".
-# id: the `remote_<name>_basic` environment written by job_conf.yml.j2 (keep the
-# name logic in sync); label: the config's `label` key, or the host of its URL.
-# AMQP Pulsars follow as `amqp_<name>`, labelled with their `label` or `name`.
+# id: the TPV destination files/galaxy/tpv/destinations.yml.j2 writes (`remote_<name>_basic`
+# for REST Pulsars, keep the name logic in sync; `amqp_<name>` for AMQP ones);
+# tag: the `<name>-pulsar` scheduling tag that destination requires, which is the value the
+# dropdown stores (usegalaxy.eu convention); label: the config's `label` key, or the host of
+# its URL (REST) or its name (AMQP).
 _galaxy_remote_destinations: >-
   {%- set ns = namespace(destinations=[]) -%}
   {%- for pulsar in _galaxy_pulsar_configs_raw -%}
     {%- set name = pulsar.name | default(pulsar.url | replace('https://', '') | replace('http://', '') | replace('.', '-') | replace('/', '-')) -%}
     {%- set host = pulsar.url | regex_replace('^[a-zA-Z][a-zA-Z0-9+.-]*://', '') | regex_replace('[/:].*$', '') -%}
-    {%- set ns.destinations = ns.destinations + [{'id': 'remote_' ~ name ~ '_basic', 'label': pulsar.label | default(host, true)}] -%}
+    {%- set ns.destinations = ns.destinations + [{'id': 'remote_' ~ name ~ '_basic', 'label': pulsar.label | default(host, true), 'tag': name ~ '-pulsar'}] -%}
   {%- endfor -%}
   {%- for pulsar in _galaxy_pulsar_amqp_configs -%}
-    {%- set ns.destinations = ns.destinations + [{'id': pulsar.environment, 'label': pulsar.label}] -%}
+    {%- set ns.destinations = ns.destinations + [{'id': pulsar.environment, 'label': pulsar.label, 'tag': pulsar.name ~ '-pulsar'}] -%}
   {%- endfor -%}
   {{ ns.destinations }}
-# Route jobs through the default_dispatcher rule when there is anything to dispatch.
-_galaxy_use_dispatcher: "{{ _galaxy_use_interactive_tools or (_galaxy_remote_destinations | length > 0) }}"
+# The scheduling tag of every destination a tool mapping (src_galaxy_pulsar_tool_mappings
+# `environment`) may name: the local ones, the remote ones above and the Docker variant
+# (`remote_<name>`) of REST Pulsars with docker_enabled.
+_galaxy_tpv_destination_tags: >-
+  {%- set ns = namespace(tags={'local': 'local', 'docker': 'docker', 'singularity': 'singularity'}) -%}
+  {%- for destination in _galaxy_remote_destinations -%}
+    {%- set ns.tags = ns.tags | combine({destination.id: destination.tag}) -%}
+  {%- endfor -%}
+  {%- for pulsar in _galaxy_pulsar_configs_raw if pulsar.docker_enabled | default(false) | bool -%}
+    {%- set name = pulsar.name | default(pulsar.url | replace('https://', '') | replace('http://', '') | replace('.', '-') | replace('/', '-')) -%}
+    {%- set ns.tags = ns.tags | combine({'remote_' ~ name: name ~ '-pulsar-docker'}) -%}
+  {%- endfor -%}
+  {{ ns.tags }}
+# Tool mappings apply only when there is a remote Pulsar (as before TPV); each gets the tag
+# of its destination (unknown environments are reported by _galaxy_tpv_config_errors).
+_galaxy_tpv_tool_mappings: >-
+  {%- set ns = namespace(mappings=[]) -%}
+  {%- for mapping in (_galaxy_pulsar_tool_mappings if _galaxy_remote_destinations | length > 0 else []) -%}
+    {%- if mapping.environment | default('') in _galaxy_tpv_destination_tags and mapping.tool_id is defined -%}
+      {%- set ns.mappings = ns.mappings + [mapping | combine({'tag': _galaxy_tpv_destination_tags[mapping.environment]})] -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {{ ns.mappings }}
+# Checked in tasks/set_config.yml: two remote Pulsars with one tag, or a tool mapping to an
+# unknown destination, would route jobs to the wrong place.
+_galaxy_tpv_config_errors: >-
+  {%- set ns = namespace(errors=[]) -%}
+  {%- set tags = _galaxy_remote_destinations | map(attribute='tag') | list -%}
+  {%- for tag in tags | unique if tags | select('equalto', tag) | list | length > 1 -%}
+    {%- set error = 'Pulsar tag ' ~ tag ~ ' is used by more than one of src_galaxy_pulsar_configs /' -%}
+    {%- set ns.errors = ns.errors + [error ~ ' src_galaxy_pulsar_amqp_configs (names must differ)'] -%}
+  {%- endfor -%}
+  {%- for mapping in (_galaxy_pulsar_tool_mappings if _galaxy_remote_destinations | length > 0 else []) -%}
+    {%- if mapping.tool_id is not defined -%}
+      {%- set ns.errors = ns.errors + ['src_galaxy_pulsar_tool_mappings entry ' ~ (mapping | to_json) ~ ' has no tool_id'] -%}
+    {%- elif mapping.environment | default('') not in _galaxy_tpv_destination_tags -%}
+      {%- set error = 'src_galaxy_pulsar_tool_mappings: ' ~ mapping.tool_id ~ ' maps to unknown environment ' -%}
+      {%- set known = ' (known: ' ~ (_galaxy_tpv_destination_tags | list | join(', ')) ~ ')' -%}
+      {%- set ns.errors = ns.errors + [error ~ (mapping.environment | default('') | to_json) ~ known] -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {{ ns.errors }}
 # Experimental "bring your own Pulsar" preference form (backend: issue #6).
 _galaxy_byoc_pulsar: "{{ src_galaxy_byoc_pulsar | default(false, true) | bool }}"

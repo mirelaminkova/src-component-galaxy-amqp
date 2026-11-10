@@ -9,5 +9,30 @@ ansible-lint~=26.11.0
 yamllint~=1.38.0
 ruff~=0.17.4
 pre-commit~=4.7.0
-semgrep~=1.184.0
 ast-grep-cli~=0.51.1
+# TPV job routing tests (tpv lint / dry-run on the rendered config). TPV needs Galaxy's own
+# packages: the TPV version installed into Galaxy's venv (galaxy_additional_venv_packages)
+# and the Galaxy release the playbook deploys (galaxy_commit_id, release_26.0). galaxy-app
+# does not pin its galaxy-* dependencies, so they are pinned here. fissix stands in for
+# lib2to3 (galaxy.util.template), which Ubuntu's Python 3.12 lacks without python3-lib2to3.
+total-perspective-vortex~=3.1.3
+galaxy-app~=26.0.2
+galaxy-auth~=26.0.2
+galaxy-config~=26.0.2
+galaxy-data~=26.0.2
+galaxy-files~=26.0.2
+galaxy-job-execution~=26.0.2
+galaxy-job-metrics~=26.0.2
+galaxy-navigation~=26.0.2
+galaxy-objectstore~=26.0.2
+galaxy-schema~=26.0.2
+galaxy-tool-shed-schema~=26.0.2
+galaxy-tool-util~=26.0.2
+galaxy-tool-util-models~=26.0.2
+galaxy-tours~=26.0.2
+galaxy-util~=26.0.2
+galaxy-web-framework~=26.0.2
+galaxy-web-stack~=26.0.2
+fissix~=24.4.24
+# semgrep is not listed: its pins conflict with Galaxy's. It runs from pre-commit's own
+# environment (semgrep==1.184.0 in .pre-commit-config.yaml).

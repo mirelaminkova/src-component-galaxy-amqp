@@ -8,14 +8,16 @@ from tests.helpers import render
 
 
 def test_environment_loads_templates_from_the_repo():
-    env = render.make_environment()
+    templates = render.make_environment().list_templates()
 
-    assert "default_dispatch.py.j2" in env.list_templates()
+    # templates/ by its relative name, everything else (files/) by its repo path
+    assert "galaxy/config/job_conf.yml.j2" in templates
+    assert "files/galaxy/tpv/destinations.yml.j2" in templates
 
 
 def test_missing_variables_fail_loudly():
     with pytest.raises(jinja2.UndefinedError):
-        render.render_template("default_dispatch.py.j2", {})
+        render.render_template("files/galaxy/tpv/tool_defaults.yml.j2", {})
 
 
 @pytest.mark.parametrize(
