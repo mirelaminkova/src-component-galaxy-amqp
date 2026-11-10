@@ -39,7 +39,7 @@ repos:
         name: ansible-lint
         entry: env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE ansible-lint
         language: python
-        additional_dependencies: [ansible-lint==26.11.0]
+        additional_dependencies: [ansible-lint==26.11.0, ansible-core==2.22.0]
         files: \.(ya?ml|j2)$
         pass_filenames: false
 
@@ -52,7 +52,7 @@ repos:
           - pytest-cov==7.1.0
           - Jinja2==3.1.6
           - PyYAML==6.0.3
-          - ansible-core==2.21.6
+          - ansible-core==2.22.0
           # TPV and Galaxy 26.0, as in requirements-dev.txt
           - total-perspective-vortex==3.1.3
           - galaxy-app==26.0.2
