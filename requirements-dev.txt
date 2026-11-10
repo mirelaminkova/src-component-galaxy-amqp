@@ -1,5 +1,5 @@
 # Development and CI tooling (unit tests, linters, git hooks).
-# Install into a virtualenv: python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+# Install into a virtualenv: python3.13 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 pytest~=9.2.0
 pytest-cov~=7.1.0
 Jinja2~=3.1.6
