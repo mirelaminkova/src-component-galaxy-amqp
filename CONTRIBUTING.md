@@ -7,8 +7,12 @@ All checks run locally through [pre-commit](https://pre-commit.com/) and again i
 
 ### One-time setup
 
+The dev tooling needs **Python >= 3.13** (ansible-core 2.22 requires it; the version CI
+uses is in `.python-version`). On Ubuntu 24.04, whose `python3` is 3.12, get one with e.g.
+`uv python install 3.13` or the deadsnakes PPA.
+
 ```bash
-python3 -m venv .venv
+python3.13 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/pre-commit install --hook-type pre-commit --hook-type pre-push
 ```
