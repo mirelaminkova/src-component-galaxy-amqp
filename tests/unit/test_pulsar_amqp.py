@@ -394,3 +394,10 @@ def test_every_amqp_destination_is_a_job_conf_environment_and_in_the_dropdown():
             "pulsar_mq_"
         )
         assert [destination["label"], destination["id"]] in options
+
+
+def test_rabbitmq_module_dependencies_are_installed():
+    # community.rabbitmq.rabbitmq_vhost imports requests; it only runs once a vhost exists.
+    [install] = [t for t in _rabbitmq_tasks() if t["name"] == "Install RabbitMQ"]
+
+    assert set(install["ansible.builtin.apt"]["name"]) == {"rabbitmq-server", "python3-requests"}

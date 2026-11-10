@@ -109,9 +109,12 @@
       ListenStream=
       ListenStream=127.0.0.1:4369
 
+# python3-requests: imported by community.rabbitmq.rabbitmq_vhost on the target.
 - name: Install RabbitMQ
   ansible.builtin.apt:
-    name: rabbitmq-server
+    name:
+      - rabbitmq-server
+      - python3-requests
     state: present
 
 # Compare the live socket rather than the drop-in's change status, so a run that failed after
