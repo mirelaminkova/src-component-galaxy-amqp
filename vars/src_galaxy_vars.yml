@@ -56,6 +56,9 @@ _galaxy_has_pulsar: "{{ (_galaxy_pulsar_configs_raw | length > 0) | bool }}"
 # Note that some component parameters are also used in galaxy_vars.yml:
 # src_galaxy_storage_path
 # src_galaxy_version
+# Galaxy 26.1+ ships its prebuilt client as the galaxy-web-client wheel, which the
+# galaxyproject.galaxy role cannot install yet; tasks/web_client.yml does it instead.
+_galaxy_web_client_wheel: "{{ src_galaxy_version | default('26.1', true) is version('26.1', '>=') }}"
 
 # --- Pulsar user preferences and preference-based job routing (issue #5) ---
 # Remote destinations users can pick under "Use distributed compute resources".
