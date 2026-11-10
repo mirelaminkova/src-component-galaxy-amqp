@@ -7,6 +7,7 @@ files and modes tasks/cd.yml writes, and the tags a CD run is limited to.
 """
 
 import base64
+import hashlib
 import os
 import re
 import subprocess
@@ -251,6 +252,37 @@ def test_timer_runs_the_service_every_interval_but_not_right_after_activation():
 
 # --- wrapper script --------------------------------------------------------------
 
+STUB = r"""#!/bin/bash
+{
+    printf 'CALL %s\n' "$TOOL"
+    printf 'ARG %s\n' "$@"
+    printf 'ENV VAULT=%s\n' "${ANSIBLE_VAULT_PASSWORD_FILE:-}"
+    printf 'ENV FORCE_HANDLERS=%s\n' "${ANSIBLE_FORCE_HANDLERS:-}"
+    if [[ -e $STATE_DIR/last-run-failed ]]; then marker=yes; else marker=no; fi
+    printf 'ENV MARKER=%s\n' "$marker"
+} >> "$CALLS"
+if [[ $TOOL == ansible-pull && -n ${STUB_PULL_REQUIREMENTS:-} ]]; then
+    mkdir -p "$STATE_DIR/checkout/.git"
+    printf '%s' "$STUB_PULL_REQUIREMENTS" > "$STATE_DIR/checkout/requirements.yml"
+fi
+rc_var="STUB_RC_${TOOL//-/_}"
+exit "${!rc_var:-0}"
+"""
+
+
+def _script_vars(tmp_path, state_dir, config_dir):
+    return {
+        "_galaxy_cd_venv": str(tmp_path / "venv"),
+        "_galaxy_cd_state_dir": str(state_dir),
+        "_galaxy_cd_config_dir": str(config_dir),
+        "_galaxy_cd_lock_file": str(state_dir / "lock"),
+        "_galaxy_cd_vault_password_file": str(tmp_path / "vault_password"),
+        "_galaxy_cd_deploy_key": str(config_dir / "deploy_key"),
+        "_galaxy_cd_repo": "git@github.com:org/repo name.git",
+        "_galaxy_cd_branch": "main",
+        "_galaxy_cd_tags": ["rabbitmq", "galaxy_config_files"],
+    }
+
 
 @pytest.fixture
 def cd_host(tmp_path):
@@ -258,34 +290,19 @@ def cd_host(tmp_path):
     venv_bin = tmp_path / "venv" / "bin"
     venv_bin.mkdir(parents=True)
     calls = tmp_path / "calls"
-    for tool in ("ansible-pull", "ansible-galaxy"):
-        stub = venv_bin / tool
-        stub.write_text(
-            "#!/bin/bash\n"
-            # The environment is recorded as a last argument, VAULT=<ANSIBLE_VAULT_PASSWORD_FILE>.
-            f'printf "%s\\n" "{tool}" "$@" "VAULT=${{ANSIBLE_VAULT_PASSWORD_FILE:-}}" "--" '
-            f'>> "{calls}"\n'
-            f'exit "${{STUB_RC_{tool.replace("-", "_").upper()}:-0}}"\n'
-        )
-        stub.chmod(0o755)
     config_dir = tmp_path / "etc"
     state_dir = tmp_path / "state"
     config_dir.mkdir()
     state_dir.mkdir()
+    for tool in ("ansible-pull", "ansible-galaxy"):
+        stub = venv_bin / tool
+        stub.write_text(STUB.replace("#!/bin/bash\n", f"#!/bin/bash\nTOOL={tool}\n", 1))
+        stub.chmod(0o755)
     (config_dir / "params.yml").write_text("{}\n")
-    variables = {
-        "_galaxy_cd_venv": str(tmp_path / "venv"),
-        "_galaxy_cd_state_dir": str(state_dir),
-        "_galaxy_cd_config_dir": str(config_dir),
-        "_galaxy_cd_lock_file": str(tmp_path / "galaxy-cd.lock"),
-        "_galaxy_cd_vault_password_file": str(tmp_path / "vault_password"),
-        "_galaxy_cd_deploy_key": str(config_dir / "deploy_key"),
-        "_galaxy_cd_repo": "git@github.com:org/repo name.git",
-        "_galaxy_cd_branch": "main",
-        "_galaxy_cd_tags": ["rabbitmq", "galaxy_config_files"],
-    }
     script = tmp_path / "galaxy-cd"
-    script.write_text(render_template("cd/galaxy-cd.sh.j2", variables))
+    script.write_text(
+        render_template("cd/galaxy-cd.sh.j2", _script_vars(tmp_path, state_dir, config_dir))
+    )
     script.chmod(0o700)
 
     class Host:
@@ -296,52 +313,62 @@ def cd_host(tmp_path):
                 [str(script)],
                 capture_output=True,
                 text=True,
-                env={"PATH": os.environ["PATH"], **env},
+                env={
+                    "PATH": os.environ["PATH"],
+                    "CALLS": str(calls),
+                    "STATE_DIR": str(state_dir),
+                    **env,
+                },
                 check=False,
             )
             invocations = []
             if calls.exists():
-                current = []
                 for line in calls.read_text().splitlines():
-                    if line == "--":
-                        invocations.append(current)
-                        current = []
+                    kind, _, value = line.partition(" ")
+                    if kind == "CALL":
+                        invocations.append({"tool": value, "args": [], "env": {}})
+                    elif kind == "ARG":
+                        invocations[-1]["args"].append(value)
                     else:
-                        current.append(line)
+                        key, _, env_value = value.partition("=")
+                        invocations[-1]["env"][key] = env_value
                 calls.unlink()
             return result, invocations
 
     Host.state_dir = state_dir
     Host.config_dir = config_dir
+    Host.checkout = state_dir / "checkout"
     return Host()
 
 
-def _pull_args(invocations):
-    pulls = [args[1:-1] for args in invocations if args[0] == "ansible-pull"]
+def _pull(invocations):
+    pulls = [call for call in invocations if call["tool"] == "ansible-pull"]
     assert len(pulls) == 1
     return pulls[0]
 
 
-def _pull_vault_password_file(invocations):
-    (vault,) = [args[-1] for args in invocations if args[0] == "ansible-pull"]
-    return vault.removeprefix("VAULT=")
+def _pull_args(invocations):
+    return _pull(invocations)["args"]
 
 
-def test_script_is_valid_bash():
-    text = render_template(
-        "cd/galaxy-cd.sh.j2",
-        {
-            "_galaxy_cd_venv": "/opt/galaxy-cd/venv",
-            "_galaxy_cd_state_dir": "/var/lib/galaxy-cd",
-            "_galaxy_cd_config_dir": "/etc/galaxy-cd",
-            "_galaxy_cd_lock_file": "/run/lock/galaxy-cd.lock",
-            "_galaxy_cd_vault_password_file": VAULT_PASSWORD_FILE,
-            "_galaxy_cd_deploy_key": "/etc/galaxy-cd/deploy_key",
-            "_galaxy_cd_repo": DEFAULT_REPO,
-            "_galaxy_cd_branch": "main",
-            "_galaxy_cd_tags": ["rabbitmq", "galaxy_config_files"],
-        },
-    )
+def _galaxy_installs(invocations):
+    return [call["args"] for call in invocations if call["tool"] == "ansible-galaxy"]
+
+
+def _make_checkout(cd_host, requirements=None):
+    (cd_host.checkout / ".git").mkdir(parents=True)
+    if requirements is not None:
+        (cd_host.checkout / "requirements.yml").write_text(requirements)
+
+
+def _record_requirements(cd_host, text):
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    (cd_host.state_dir / "requirements.sha256").write_text(digest + "\n")
+
+
+def test_script_is_valid_bash(tmp_path):
+    variables = _script_vars(tmp_path, Path("/var/lib/galaxy-cd"), Path("/etc/galaxy-cd"))
+    text = render_template("cd/galaxy-cd.sh.j2", variables)
 
     subprocess.run(["bash", "-n"], input=text, text=True, check=True)  # noqa: S607
     assert text.startswith("#!/bin/bash\n")
@@ -354,7 +381,7 @@ def test_first_run_pulls_the_branch_and_runs_only_the_cd_tags(cd_host):
     args = _pull_args(invocations)
     assert args[args.index("--url") + 1] == "git@github.com:org/repo name.git"
     assert args[args.index("--checkout") + 1] == "main"
-    assert args[args.index("--directory") + 1] == str(cd_host.state_dir / "checkout")
+    assert args[args.index("--directory") + 1] == str(cd_host.checkout)
     assert args[args.index("--tags") + 1] == "rabbitmq,galaxy_config_files"
     assert args[args.index("--inventory") + 1] == "localhost,"
     assert "--clean" in args
@@ -368,22 +395,66 @@ def test_first_run_pulls_the_branch_and_runs_only_the_cd_tags(cd_host):
     # No checkout yet: always run the playbook.
     assert "--only-if-changed" not in args
     # Nothing to decrypt or authenticate with.
-    assert _pull_vault_password_file(invocations) == ""
+    assert _pull(invocations)["env"]["VAULT"] == ""
     assert "--private-key" not in args
     assert "galaxy-cd: OK" in result.stdout
 
 
+def test_handlers_run_even_when_a_later_task_fails(cd_host):
+    # Otherwise a config change followed by a failure never restarts Galaxy: the retry
+    # renders identical files and notifies nothing.
+    _, invocations = cd_host.run()
+
+    assert _pull(invocations)["env"]["FORCE_HANDLERS"] == "True"
+
+
 def test_later_runs_only_run_the_playbook_when_the_branch_changed(cd_host):
-    checkout = cd_host.state_dir / "checkout"
-    (checkout / ".git").mkdir(parents=True)
-    (checkout / "requirements.yml").write_text("---\n")
+    _make_checkout(cd_host, "---\n")
+    _record_requirements(cd_host, "---\n")
 
     result, invocations = cd_host.run()
 
     assert result.returncode == 0, result.stderr
     assert "--only-if-changed" in _pull_args(invocations)
-    galaxy = [args[1:-1] for args in invocations if args[0] == "ansible-galaxy"]
-    assert galaxy == [["install", "-r", str(checkout / "requirements.yml")]]
+    # requirements.yml did not change: nothing to install.
+    assert _galaxy_installs(invocations) == []
+
+
+def test_changed_requirements_are_force_installed_before_the_run(cd_host):
+    _make_checkout(cd_host, "roles: [new]\n")
+    _record_requirements(cd_host, "roles: [old]\n")
+
+    result, invocations = cd_host.run()
+
+    assert result.returncode == 0, result.stderr
+    # --force: without it ansible-galaxy keeps an installed role of another version.
+    assert _galaxy_installs(invocations) == [
+        ["install", "--force", "-r", str(cd_host.checkout / "requirements.yml")]
+    ]
+    # The playbook runs in full, with the new roles.
+    assert "--only-if-changed" not in _pull_args(invocations)
+    digest = (cd_host.state_dir / "requirements.sha256").read_text().strip()
+    assert digest == hashlib.sha256(b"roles: [new]\n").hexdigest()
+
+
+def test_requirements_changed_by_the_pull_are_installed_and_applied_next_run(cd_host):
+    _make_checkout(cd_host, "roles: [old]\n")
+    _record_requirements(cd_host, "roles: [old]\n")
+
+    result, invocations = cd_host.run(STUB_PULL_REQUIREMENTS="roles: [new]\n")
+
+    assert result.returncode == 0, result.stderr
+    assert [call["tool"] for call in invocations] == ["ansible-pull", "ansible-galaxy"]
+    assert _galaxy_installs(invocations)[0][:2] == ["install", "--force"]
+    assert "requirements.yml changed" in result.stdout
+    # This run used the old roles, so the next one runs the playbook in full.
+    assert (cd_host.state_dir / "last-run-failed").exists()
+
+    result, invocations = cd_host.run()
+
+    assert "--only-if-changed" not in _pull_args(invocations)
+    assert _galaxy_installs(invocations) == []
+    assert not (cd_host.state_dir / "last-run-failed").exists()
 
 
 def test_secret_parameters_vault_password_and_deploy_key_are_used_when_present(cd_host):
@@ -399,15 +470,16 @@ def test_secret_parameters_vault_password_and_deploy_key_are_used_when_present(c
     # In the environment, not --vault-password-file: ansible-pull gives the extra vars (and so
     # the vault-encrypted secret_params.yml) to its git checkout command too, but not that option.
     assert "--vault-password-file" not in args
-    assert _pull_vault_password_file(invocations) == str(cd_host.path / "vault_password")
+    assert _pull(invocations)["env"]["VAULT"] == str(cd_host.path / "vault_password")
     assert args[args.index("--private-key") + 1] == str(cd_host.config_dir / "deploy_key")
-    assert "--accept-host-key" in args
+    # Host keys are pinned (tasks/cd.yml), never trusted on first use.
+    assert "--accept-host-key" not in args
 
 
 def test_failed_run_is_reported_and_retried_in_full(cd_host):
-    (cd_host.state_dir / "checkout" / ".git").mkdir(parents=True)
+    _make_checkout(cd_host)
 
-    result, _ = cd_host.run(STUB_RC_ANSIBLE_PULL="2")
+    result, _ = cd_host.run(STUB_RC_ansible_pull="2")
 
     assert result.returncode == 2
     assert "galaxy-cd: FAILED" in result.stderr
@@ -422,21 +494,31 @@ def test_failed_run_is_reported_and_retried_in_full(cd_host):
     assert not (cd_host.state_dir / "last-run-failed").exists()
 
 
-def test_failed_requirements_install_fails_the_run(cd_host):
-    checkout = cd_host.state_dir / "checkout"
-    (checkout / ".git").mkdir(parents=True)
-    (checkout / "requirements.yml").write_text("---\n")
+def test_an_interrupted_run_is_retried_in_full(cd_host):
+    # The marker is set before ansible-pull and only removed on success, so a run killed
+    # midway (timeout, reboot, OOM, systemctl stop) leaves it behind.
+    _make_checkout(cd_host)
 
-    result, invocations = cd_host.run(STUB_RC_ANSIBLE_GALAXY="1")
+    _, invocations = cd_host.run()
+
+    assert _pull(invocations)["env"]["MARKER"] == "yes"
+    assert not (cd_host.state_dir / "last-run-failed").exists()
+
+
+def test_failed_requirements_install_fails_the_run(cd_host):
+    _make_checkout(cd_host, "---\n")
+
+    result, invocations = cd_host.run(STUB_RC_ansible_galaxy="1")
 
     assert result.returncode == 1
     assert "galaxy-cd: FAILED" in result.stderr
-    assert [args[0] for args in invocations] == ["ansible-galaxy"]
+    assert [call["tool"] for call in invocations] == ["ansible-galaxy"]
     assert (cd_host.state_dir / "last-run-failed").exists()
+    assert not (cd_host.state_dir / "requirements.sha256").exists()
 
 
 def test_runs_never_overlap(cd_host):
-    lock = cd_host.path / "galaxy-cd.lock"
+    lock = cd_host.state_dir / "lock"
     with subprocess.Popen(  # noqa: S603
         ["flock", str(lock), "sleep", "30"]  # noqa: S607
     ) as holder:
@@ -458,6 +540,24 @@ def test_runs_never_overlap(cd_host):
     assert result.returncode == 0
     assert "another run is in progress" in result.stdout
     assert invocations == []
+
+
+def test_a_lock_that_cannot_be_opened_fails_the_run(cd_host):
+    # Never "busy, exit 0": that would silently skip every run.
+    (cd_host.state_dir / "lock").mkdir()
+
+    result, invocations = cd_host.run()
+
+    assert result.returncode != 0
+    assert "galaxy-cd: FAILED" in result.stderr
+    assert "lock" in result.stderr
+    assert invocations == []
+
+
+def test_lock_is_in_the_root_only_state_dir():
+    resolve = _resolve()
+
+    assert resolve("_galaxy_cd_lock_file") == resolve("_galaxy_cd_state_dir") + "/lock"
 
 
 # --- tasks/cd.yml ----------------------------------------------------------------
@@ -491,6 +591,32 @@ def test_cd_setup_writes_root_only_files():
     for template in templates.values():
         assert template["owner"] == "root"
         assert template["group"] == "root"
+
+
+def test_cd_setup_records_the_requirements_it_installed():
+    tasks = {task["name"]: task for task in _load_yaml(CD_TASKS)}
+
+    install = tasks["Install the playbook's roles and collections for galaxy-cd"]
+    assert install["ansible.builtin.command"]["argv"][1:4] == ["install", "--force", "-r"]
+    checksum = tasks["Check the installed requirements.yml"]["ansible.builtin.stat"]
+    assert checksum["checksum_algorithm"] == "sha256"
+    record = tasks["Record the installed requirements.yml"]["ansible.builtin.copy"]
+    # The same file name and format galaxy-cd compares (sha256sum's hex digest).
+    assert record["dest"] == "{{ _galaxy_cd_state_dir }}/requirements.sha256"
+    assert record["content"] == "{{ _galaxy_cd_requirements_file.stat.checksum }}\n"
+    script = (REPO_ROOT / "templates" / "cd" / "galaxy-cd.sh.j2").read_text()
+    assert 'requirements_record="$state_dir/requirements.sha256"' in script
+
+
+def test_ssh_host_keys_are_pinned_not_trusted_on_first_use():
+    tasks = {task["name"]: task for task in _load_yaml(CD_TASKS)}
+    known_hosts = tasks["Pin the SSH host keys of the CD repository host"]
+
+    assert known_hosts["ansible.builtin.known_hosts"]["path"] == "/root/.ssh/known_hosts"
+    assert known_hosts["loop"] == "{{ _galaxy_cd_known_hosts }}"
+    keys = _resolve()("_galaxy_cd_known_hosts")
+    assert any(key.startswith("github.com ssh-ed25519 ") for key in keys)
+    assert "accept-host-key" not in (REPO_ROOT / "templates" / "cd" / "galaxy-cd.sh.j2").read_text()
 
 
 def test_secret_parameters_are_only_written_vault_encrypted():

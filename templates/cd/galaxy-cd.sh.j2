@@ -20,7 +20,11 @@ branch={{ _galaxy_cd_branch | quote }}
 tags={{ _galaxy_cd_tags | join(',') | quote }}
 
 checkout="$state_dir/checkout"
+# Present while a run is in progress and after a failed or interrupted one: the next run then
+# runs the playbook even if the branch did not change.
 failed_marker="$state_dir/last-run-failed"
+# sha256 of the requirements.yml whose roles/collections are installed.
+requirements_record="$state_dir/requirements.sha256"
 params="$config_dir/params.yml"
 secret_params="$config_dir/secret_params.yml"
 
@@ -28,6 +32,9 @@ export ANSIBLE_ROLES_PATH="$state_dir/ansible/roles"
 export ANSIBLE_COLLECTIONS_PATH="$state_dir/ansible/collections"
 export ANSIBLE_NOCOLOR=1
 export ANSIBLE_LOCALHOST_WARNING=False
+# Run notified handlers (graceful Galaxy restart) even when a later task fails; the retry
+# would render identical files and notify nothing.
+export ANSIBLE_FORCE_HANDLERS=True
 
 fail() {
     local rc=$1
@@ -37,11 +44,35 @@ fail() {
     exit "$rc"
 }
 
-exec 9>>"$lock_file"
-if ! flock --nonblock 9; then
+# The lock lives in the root-only state directory, so no other user can create or hold it.
+# Only "held by another run" is a reason to skip; any other problem fails the unit.
+if ! exec 9>>"$lock_file"; then
+    fail 1 "cannot open the lock file $lock_file"
+fi
+flock --nonblock --conflict-exit-code 75 9
+lock_rc=$?
+if (( lock_rc == 75 )); then
     echo "galaxy-cd: another run is in progress (lock $lock_file), skipping this one"
     exit 0
+elif (( lock_rc != 0 )); then
+    fail "$lock_rc" "cannot lock $lock_file"
 fi
+
+# Install the checkout's roles and collections when its requirements.yml differs from the
+# installed one. --force: without it ansible-galaxy keeps a role installed at another version.
+# Sets requirements_updated=1 when it installed something.
+requirements_updated=0
+install_requirements() {
+    local file="$checkout/requirements.yml" digest
+    [[ -f $file ]] || return 0
+    digest=$(sha256sum "$file" | cut -d ' ' -f 1) || fail 1 "sha256sum $file"
+    if [[ -f $requirements_record && $(<"$requirements_record") == "$digest" ]]; then
+        return 0
+    fi
+    "$venv/bin/ansible-galaxy" install --force -r "$file" || fail $? "ansible-galaxy install --force -r requirements.yml"
+    echo "$digest" > "$requirements_record"
+    requirements_updated=1
+}
 
 pull_args=(
     --url "$repo" --checkout "$branch" --directory "$checkout" --clean
@@ -58,25 +89,34 @@ pull_args+=(--extra-vars src_galaxy_bootstrap=false --extra-vars ansible_python_
 if [[ -f $vault_password_file ]]; then
     export ANSIBLE_VAULT_PASSWORD_FILE="$vault_password_file"
 fi
+# SSH host keys are pinned in root's known_hosts at deployment (no trust on first use).
 if [[ -f $deploy_key ]]; then
-    pull_args+=(--private-key "$deploy_key" --accept-host-key)
+    pull_args+=(--private-key "$deploy_key")
 fi
-# Skip the playbook when the branch has no new commits, unless the last run failed.
-if [[ -d $checkout/.git && ! -e $failed_marker ]]; then
+
+# Roles and collections of the current checkout (e.g. after a failed run that fetched a change).
+install_requirements
+# Skip the playbook when the branch has no new commits, unless the last run failed, was
+# interrupted, or new roles/collections were just installed.
+if [[ -d $checkout/.git && ! -e $failed_marker ]] && (( ! requirements_updated )); then
     pull_args+=(--only-if-changed)
 fi
 
-# Roles and collections of the last checkout; a changed requirements.yml is installed on the
-# run after the one that fetched it (that run fails if it needs them, so the next one retries).
-if [[ -f $checkout/requirements.yml ]]; then
-    "$venv/bin/ansible-galaxy" install -r "$checkout/requirements.yml" || fail $? "ansible-galaxy install -r requirements.yml"
-fi
-
+touch "$failed_marker"
 "$venv/bin/ansible-pull" "${pull_args[@]}" galaxysrv.yml
 rc=$?
 if (( rc != 0 )); then
     fail "$rc" "ansible-pull of $repo ($branch)"
 fi
-rm -f "$failed_marker"
+
+# The pull fetched a new requirements.yml: this run used the previous roles, so install the new
+# ones and keep the marker, so that the next run applies the playbook with them.
+requirements_updated=0
+install_requirements
 commit=$(git -C "$checkout" rev-parse --short HEAD 2>/dev/null || echo unknown)
+if (( requirements_updated )); then
+    echo "galaxy-cd: OK: $repo ($branch) at $commit is applied; requirements.yml changed, the next run applies it with the new roles and collections"
+    exit 0
+fi
+rm -f "$failed_marker"
 echo "galaxy-cd: OK: $repo ($branch) at $commit is applied"

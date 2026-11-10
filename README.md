@@ -240,13 +240,17 @@ How the files are used:
 
 With `src_galaxy_cd: true`, merged changes of the onboarding files (RabbitMQ users and vhosts, job config, TPV destinations, user preferences; see #18) reach the running workspace without recreating it.
 
+**Trust boundary.** With CD on, whatever lands on `src_galaxy_cd_branch` of `src_galaxy_cd_repo` runs **as root** on every workspace that uses it, within one interval. Anyone who can push or merge to that branch therefore has root on those workspaces. Protect the branch: on GitHub, a branch protection rule or ruleset on `main` with required pull request reviews, required status checks (pre-commit, pytest, Ansible Lint), and no direct or force pushes. If you want to control when changes arrive, point a deployment at its own branch or fork and merge into it deliberately. For signed commits only, `ansible-pull` has `--verify-commit` (add it to `/usr/local/sbin/galaxy-cd`; root's GnuPG keyring must hold the signers' keys).
+
 How it works:
 
 * At deployment, the playbook saves the component parameters the workspace was created with to `/etc/galaxy-cd/params.yml` (root, `0600`). Parameters holding secrets (a `password`, `secret`, `token`, ... in the name or in a key of the value, e.g. `private_token` in `src_galaxy_pulsar_configs`) go to `/etc/galaxy-cd/secret_params.yml` instead, encrypted with the Ansible Vault password `/etc/galaxy/vault_password` (from `src_galaxy_vault_password`); without that password the deployment fails rather than store them in plain text. `src_galaxy_vault_password` itself is never saved again.
 * It installs Ansible in `/opt/galaxy-cd/venv`, the playbook's roles and collections in `/var/lib/galaxy-cd/ansible`, the script `/usr/local/sbin/galaxy-cd`, and `galaxy-cd.service` with `galaxy-cd.timer`. The timer starts as the last step of the deployment; the first run is one interval later.
 * Every `src_galaxy_cd_interval` after the previous run ends, `galaxy-cd` runs `ansible-pull` as root: it updates `/var/lib/galaxy-cd/checkout` to `src_galaxy_cd_branch` and runs `galaxysrv.yml` with the saved parameters, the vault password file `/etc/galaxy/vault_password` (`ANSIBLE_VAULT_PASSWORD_FILE`), `src_galaxy_bootstrap=false` and `--tags rabbitmq,galaxy_config_files`. Besides the always-run tasks (variables, validation, admin facts) that is only `tasks/rabbitmq.yml` and the Galaxy role's config files (`galaxy.yml`, `job_conf.yml`, TPV, `user_preferences_extra_conf.yml`). Packages, Nginx, the database and the Galaxy code are left alone. A test (`tests/unit/test_cd.py`) fails if a task touching the onboarding files is not covered by these tags.
-* When the branch has no new commits the playbook is skipped (`--only-if-changed`), unless the previous run failed. Galaxy is restarted gracefully (`galaxyctl graceful`) by the playbook's handlers, and only when a config file changed.
-* A lock (`/run/lock/galaxy-cd.lock`) keeps runs from overlapping; a run that finds it taken exits without doing anything.
+* When the branch has no new commits the playbook is skipped (`--only-if-changed`), unless the previous run failed or was interrupted (timeout, reboot, `systemctl stop`): the marker `/var/lib/galaxy-cd/last-run-failed` is set before each run and only removed after a successful one.
+* Galaxy is restarted gracefully (`galaxyctl graceful`) by the playbook's handlers, and only when a config file changed. Handlers also run when a later task fails (`ANSIBLE_FORCE_HANDLERS`), so a changed config is never left unapplied.
+* `requirements.yml`: when the checkout's `requirements.yml` differs from the installed one (`/var/lib/galaxy-cd/requirements.sha256`), its roles and collections are reinstalled with `ansible-galaxy install --force` (without `--force`, a role already installed at another version is kept). If the pull itself brings a new `requirements.yml`, that run still uses the previous roles; the new ones are installed after it and the next run applies the playbook again with them.
+* A lock (`/var/lib/galaxy-cd/lock`, in the root-only state directory) keeps runs from overlapping; a run that finds it held by another run exits without doing anything. Any other lock problem fails the run.
 
 Check the last run:
 
@@ -264,9 +268,11 @@ Run it now: `sudo systemctl start galaxy-cd.service`. Turn it off: `sudo systemc
 sudo install -m 0600 -o root -g root /path/to/deploy_key /etc/galaxy-cd/deploy_key
 ```
 
-galaxy-cd uses it when it exists (`--private-key`, accepting the host key on first use).
+galaxy-cd uses it when it exists (`--private-key`). Host keys are not trusted on first use: the deployment writes GitHub's published SSH host key (from `https://api.github.com/meta`) to `/root/.ssh/known_hosts` (`_galaxy_cd_known_hosts` in `vars/cd_vars.yml`). For another Git host, add its published key there, or on the workspace with `sudo ssh-keygen -F <host> -f /root/.ssh/known_hosts` to check and `sudo tee -a /root/.ssh/known_hosts` to add it, after verifying the fingerprint with the host's documentation.
 
-Limits: the saved parameters are those of the deployment; changing a component parameter still needs a new workspace. A change to `requirements.yml` is installed one run after it is fetched (that run may fail; the next one retries). Why not a GitHub Actions deploy job: it would need inbound SSH to the workspace and a deploy key with access to it on GitHub, which SRC workspaces do not offer by default.
+**No rollback.** A merged change that breaks Galaxy (for example an invalid `job_conf.yml` or TPV file) is applied and Galaxy is restarted with it; previous config files are not kept (`galaxy_backup_configfiles: false`). Fix forward: revert or fix the change on the branch, and the next run (or `sudo systemctl start galaxy-cd.service`) applies the fix. The pull request checks (pytest renders the config templates and lints TPV) are the guard before merging.
+
+Limits: the saved parameters are those of the deployment; changing a component parameter still needs a new workspace. Packages, including the TPV version in the Galaxy venv, are not updated by CD. Why not a GitHub Actions deploy job: it would need inbound SSH to the workspace and a deploy key with access to it on GitHub, which SRC workspaces do not offer by default.
 
 ## Maintenance
 

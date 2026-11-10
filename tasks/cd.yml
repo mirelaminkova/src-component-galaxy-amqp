@@ -46,6 +46,7 @@
     argv:
       - "{{ _galaxy_cd_venv }}/bin/ansible-galaxy"
       - install
+      - --force
       - -r
       - "{{ playbook_dir }}/requirements.yml"
   environment:
@@ -53,6 +54,29 @@
     ANSIBLE_COLLECTIONS_PATH: "{{ _galaxy_cd_state_dir }}/ansible/collections"
   register: _galaxy_cd_requirements
   changed_when: "'installed successfully' in _galaxy_cd_requirements.stdout"
+
+# galaxy-cd force-installs requirements.yml again only when its sha256 differs from this one.
+- name: Check the installed requirements.yml
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/requirements.yml"
+    checksum_algorithm: sha256
+  register: _galaxy_cd_requirements_file
+
+- name: Record the installed requirements.yml
+  ansible.builtin.copy:
+    dest: "{{ _galaxy_cd_state_dir }}/requirements.sha256"
+    content: "{{ _galaxy_cd_requirements_file.stat.checksum }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Pin the SSH host keys of the CD repository host
+  ansible.builtin.known_hosts:
+    path: /root/.ssh/known_hosts
+    name: "{{ item.split(' ')[0] }}"
+    key: "{{ item }}"
+    state: present
+  loop: "{{ _galaxy_cd_known_hosts }}"
 
 - name: Save the component parameters without secrets
   ansible.builtin.template:

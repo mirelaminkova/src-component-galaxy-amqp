@@ -36,9 +36,16 @@ _galaxy_cd_config_dir: /etc/galaxy-cd
 _galaxy_cd_state_dir: /var/lib/galaxy-cd
 _galaxy_cd_venv: /opt/galaxy-cd/venv
 _galaxy_cd_script: /usr/local/sbin/galaxy-cd
-_galaxy_cd_lock_file: /run/lock/galaxy-cd.lock
+# In the root-only state directory: a lock in world-writable /run/lock could be pre-created or
+# held by any local user to stop CD.
+_galaxy_cd_lock_file: "{{ _galaxy_cd_state_dir }}/lock"
 # Optional read-only deploy key for a private src_galaxy_cd_repo (an SSH URL); put there by an admin.
 _galaxy_cd_deploy_key: "{{ _galaxy_cd_config_dir }}/deploy_key"
+# SSH host keys for src_galaxy_cd_repo, written to root's known_hosts so that galaxy-cd never
+# trusts a host key on first use. GitHub's published key (https://api.github.com/meta, ssh_keys);
+# add the keys of other Git hosts here.
+_galaxy_cd_known_hosts:
+  - github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
 # Written at deployment from the secret parameter src_galaxy_vault_password (#21); CD only reads it.
 _galaxy_cd_vault_password_file: /etc/galaxy/vault_password
 # ansible-core runs from its own venv; keep in step with requirements-dev.txt (tested).
