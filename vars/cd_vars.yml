@@ -48,7 +48,9 @@ _galaxy_cd_known_hosts:
   - github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
 # Written at deployment from the secret parameter src_galaxy_vault_password (#21); CD only reads it.
 _galaxy_cd_vault_password_file: /etc/galaxy/vault_password
-# ansible-core runs from its own venv; keep in step with requirements-dev.txt (tested).
+# ansible-core runs from its own venv with the workspace's Python (3.12 on Ubuntu 24.04), so it is
+# the 2.21 that SRC runs and the compat pytest job in .github/workflows/checks.yml tests (tested),
+# not requirements-dev.txt's 2.22, which needs Python >= 3.13.
 _galaxy_cd_pip_packages:
   - ansible-core==2.21.6
   - jmespath>=1.0,<2 # json_query in uusrc.general.fact_regular_users

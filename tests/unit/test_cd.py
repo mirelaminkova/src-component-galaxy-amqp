@@ -135,12 +135,17 @@ def test_cd_tags_cover_rabbitmq_and_galaxy_config_files():
     assert _resolve()("_galaxy_cd_tags") == ["rabbitmq", "galaxy_config_files"]
 
 
-def test_cd_ansible_core_matches_the_tested_version():
-    pins = _resolve()("_galaxy_cd_pip_packages")
-    dev = (REPO_ROOT / "requirements-dev.txt").read_text()
-    tested = re.search(r"^ansible-core~=(\S+)$", dev, re.MULTILINE).group(1)
+def test_cd_ansible_core_matches_the_src_compat_ci_job():
+    """The workspace's Ansible is what CI tests for SRC, not the dev tooling's.
 
-    assert f"ansible-core=={tested}" in pins
+    ansible-core 2.22 (requirements-dev.txt) needs Python >= 3.13; SRC workspaces (Ubuntu
+    24.04) have 3.12 and run the playbook with 2.21, which the compat pytest job tests.
+    """
+    pins = _resolve()("_galaxy_cd_pip_packages")
+    checks = (REPO_ROOT / ".github" / "workflows" / "checks.yml").read_text()
+    compat = re.search(r"'ansible-core~=(\S+)'", checks).group(1)
+
+    assert f"ansible-core=={compat}" in pins
 
 
 # --- saved parameters ------------------------------------------------------------
