@@ -16,9 +16,10 @@ addopts = [
 
 [tool.coverage.run]
 branch = true
-# What is measured: the playbook's filter plugins, the test helper package and the Python
-# modules rendered from repo templates (e.g. templates/default_dispatch.py.j2 -> tests/rendered/).
-source_dirs = ["filter_plugins", "tests/helpers", "tests/rendered"]
+# What is measured: the playbook's filter plugins, the operator scripts (scripts/byoc_pr), the test
+# helper package and the Python modules rendered from repo templates
+# (e.g. templates/default_dispatch.py.j2 -> tests/rendered/).
+source_dirs = ["filter_plugins", "scripts", "tests/helpers", "tests/rendered"]
 
 [tool.coverage.report]
 show_missing = true
@@ -32,5 +33,5 @@ target-version = "py310"
 select = ["E", "F", "W", "I", "B", "UP", "S", "PT", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-# assert is how pytest tests are written
-"tests/**" = ["S101"]
+# assert is how pytest tests are written; tests use made-up credentials and run git directly
+"tests/**" = ["S101", "S105", "S106", "S603", "S607"]

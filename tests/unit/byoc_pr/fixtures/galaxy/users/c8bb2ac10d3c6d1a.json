@@ -1,0 +1,18 @@
+{
+  "id": "c8bb2ac10d3c6d1a",
+  "username": "frank",
+  "email": "frank@example.org",
+  "active": true,
+  "deleted": false,
+  "purged": false,
+  "is_admin": false,
+  "preferences": {
+    "extra_user_preferences": "{\"distributed_compute|remote_resources\": \"None\"}"
+  },
+  "preferred_object_store_id": null,
+  "total_disk_usage": 0.0,
+  "nice_total_disk_usage": "0 bytes",
+  "quota": "unlimited",
+  "quota_percent": null,
+  "quota_bytes": null
+}
