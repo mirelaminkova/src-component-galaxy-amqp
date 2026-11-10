@@ -1,0 +1,53 @@
+---
+# Continuous deployment (issue #22): an ansible-pull systemd timer (galaxy-cd.timer) that applies
+# merged onboarding PRs to this workspace. Set up by tasks/cd.yml when src_galaxy_cd is true.
+
+_galaxy_cd: "{{ src_galaxy_cd | default(false, true) | bool }}"
+_galaxy_cd_repo: "{{ src_galaxy_cd_repo | default('https://github.com/mirelaminkova/src-component-galaxy-amqp.git', true) | string | trim }}"
+_galaxy_cd_branch: "{{ src_galaxy_cd_branch | default('main', true) | string | trim }}"
+# A bare number is minutes; otherwise a systemd time span such as 30min or 2h.
+_galaxy_cd_interval_input: "{{ src_galaxy_cd_interval | default(15, true) | string | regex_replace('\\s+', '') }}"
+_galaxy_cd_interval: >-
+  {{ (_galaxy_cd_interval_input is match('^[0-9]+$')) | ternary(_galaxy_cd_interval_input ~ 'min', _galaxy_cd_interval_input) }}
+# Empty if the CD parameters are usable (asserted in tasks/set_config.yml when src_galaxy_cd is true).
+_galaxy_cd_errors: >-
+  {%- set errors = [] -%}
+  {%- if _galaxy_cd_interval is not match('^[1-9][0-9]*(s|sec|m|min|h|hr|d)$') -%}
+    {%- set _ = errors.append("src_galaxy_cd_interval must be a number of minutes or a time span such as 30min or 2h, got '"
+                              ~ _galaxy_cd_interval_input ~ "'.") -%}
+  {%- endif -%}
+  {%- if _galaxy_cd_repo is not match('^(https://|ssh://|git@)[^\\s%\'"\\\\]+$') -%}
+    {%- set _ = errors.append("src_galaxy_cd_repo must be an https://, ssh:// or git@ URL, got '" ~ _galaxy_cd_repo ~ "'.") -%}
+  {%- endif -%}
+  {%- if _galaxy_cd_branch is not match('^[A-Za-z0-9_][A-Za-z0-9._/-]*$') -%}
+    {%- set _ = errors.append("src_galaxy_cd_branch must be a branch name such as main, got '" ~ _galaxy_cd_branch ~ "'.") -%}
+  {%- endif -%}
+  {{ errors }}
+
+# What a CD run applies: every task tagged `always` (variables, validation, facts), the RabbitMQ
+# users/vhosts (tasks/rabbitmq.yml, tag rabbitmq) and the galaxyproject.galaxy role's
+# galaxy_config_files (galaxy_config_templates: job_conf.yml, user_preferences_extra_conf.yml,
+# TPV; and galaxy.yml). tests/unit/test_cd.py fails if a task touching onboarding files is outside.
+_galaxy_cd_tags:
+  - rabbitmq
+  - galaxy_config_files
+
+_galaxy_cd_config_dir: /etc/galaxy-cd
+_galaxy_cd_state_dir: /var/lib/galaxy-cd
+_galaxy_cd_venv: /opt/galaxy-cd/venv
+_galaxy_cd_script: /usr/local/sbin/galaxy-cd
+_galaxy_cd_lock_file: /run/lock/galaxy-cd.lock
+# Optional read-only deploy key for a private src_galaxy_cd_repo (an SSH URL); put there by an admin.
+_galaxy_cd_deploy_key: "{{ _galaxy_cd_config_dir }}/deploy_key"
+# Written at deployment from the secret parameter src_galaxy_vault_password (#21); CD only reads it.
+_galaxy_cd_vault_password_file: /etc/galaxy/vault_password
+# ansible-core runs from its own venv; keep in step with requirements-dev.txt (tested).
+_galaxy_cd_pip_packages:
+  - ansible-core==2.21.6
+  - jmespath>=1.0,<2 # json_query in uusrc.general.fact_regular_users
+
+# Component parameters this workspace was created with, split by the src_cd_params filter
+# (filter_plugins/src_galaxy.py) into plain ones and ones holding secrets.
+_galaxy_cd_param_names: "{{ lookup('ansible.builtin.varnames', '^src_', '^workspace_fqdn$', '^rsc_nginx_service_url$', wantlist=True) }}"
+_galaxy_cd_params: >-
+  {{ dict(_galaxy_cd_param_names | zip(query('ansible.builtin.vars', *_galaxy_cd_param_names))) | src_cd_params }}

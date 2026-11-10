@@ -15,3 +15,7 @@ src_galaxy_pulsar_amqp_configs: ''
 # Secret parameter: Ansible Vault password of secret_group_vars/*.yml (BYOC onboarding, issue #21).
 # Needed only when secret_group_vars/ holds files and src_galaxy_rabbitmq is 'true'.
 src_galaxy_vault_password: ''
+# Continuous deployment with an ansible-pull timer (see README, "Continuous deployment").
+src_galaxy_cd: 'false'
+src_galaxy_cd_branch: main
+src_galaxy_cd_interval: '15'

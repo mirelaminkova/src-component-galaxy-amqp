@@ -86,6 +86,11 @@ The component takes the following parameters:
 * `src_galaxy_pulsar_amqp_configs`: String (default: empty). Remote Pulsar servers that connect to Galaxy's RabbitMQ, in the same format as `src_galaxy_pulsar_configs`, e.g. `[{name: hpc, label: Our HPC cluster, docker_enabled: true}]`. Requires `src_galaxy_rabbitmq: true`. See [Pulsar over AMQP](#pulsar-over-amqp) for the keys.
 * `src_galaxy_vault_password`: Secret string (default: empty). Ansible Vault password of `secret_group_vars/*.yml`. Written to `/etc/galaxy/vault_password` (`root:root 0600`). Needed when `secret_group_vars/` holds files and `src_galaxy_rabbitmq` is `true`. See [Onboarding a BYOC Pulsar via PR](#onboarding-a-byoc-pulsar-via-pr).
 
+* `src_galaxy_cd`: Boolean (default: `false`). Apply changes merged to `src_galaxy_cd_branch` (e.g. BYOC onboarding PRs) to the running workspace with an `ansible-pull` timer. See [Continuous deployment](#continuous-deployment).
+* `src_galaxy_cd_repo`: String (default: `https://github.com/mirelaminkova/src-component-galaxy-amqp.git`). Repository galaxy-cd pulls. A private repository needs an SSH URL (`git@github.com:org/repo.git`) and a deploy key, see below.
+* `src_galaxy_cd_branch`: String (default: `main`). Branch galaxy-cd applies.
+* `src_galaxy_cd_interval`: Minutes, or a systemd time span such as `30min` or `2h` (default: `15`). Time between the end of one galaxy-cd run and the start of the next.
+
 ## Bootstrapping
 
 The `src_galaxy_bootstrap` parameter determines whether the Galaxy instance should be bootstrapped: that is, whether various tools, workflows, and datamanagers should be installed.
@@ -230,6 +235,38 @@ How the files are used:
 * **Contract tests**: they insert the lines #872 and #1384 add, verbatim ([tests/fixtures/byoc_onboarding/](tests/fixtures/byoc_onboarding/)), into copies of this repository's own files at the anchors above, and add the passwords to a Vault file with a throwaway password. They check both the first onboarding on the empty files and a second one. The tests check that the playbook variables resolve, that RabbitMQ gets the users and vhosts, and that the job configuration has the runners pointed at this Galaxy (loaded by Galaxy's own job configuration code). They also check that the select shows the options, that the TPV configuration lints, and that a TPV dry run through `job_conf.yml` sends the job of a user who picked an endpoint's tag to that endpoint's destination and runner. `tasks/byoc_onboarding.yml` itself runs with `ansible-playbook` for the Vault password file, a missing password and a wrong password.
 * **For the Pulsar admin**: the Pulsar connects with the RabbitMQ user from `group_vars/mq.yml` (`galaxy_<id>`) and the password the admin chose in the **Bring your own Pulsar** form (the value in `secret_group_vars/pulsar.yml`). Its `app.yml` gets `message_queue_url: "pyamqp://galaxy_<id>:<password>@<workspace_fqdn>:<src_galaxy_rabbitmq_port>//pulsar/galaxy_<id>?ssl=1"`, the `manager` named in the runner's params under `managers:`, and the `amqp_*` settings shown in [Pulsar over AMQP](#pulsar-over-amqp). The Galaxy URL and the AMQPS port are in the workspace's details on SRC.
 * Removing an endpoint from the files removes its runner and select option. Its RabbitMQ user, vhost and `/etc/galaxy-rabbitmq/galaxy_<id>.pass` stay, as for `src_galaxy_pulsar_amqp_configs`.
+
+## Continuous deployment
+
+With `src_galaxy_cd: true`, merged changes of the onboarding files (RabbitMQ users and vhosts, job config, TPV destinations, user preferences; see #18) reach the running workspace without recreating it.
+
+How it works:
+
+* At deployment, the playbook saves the component parameters the workspace was created with to `/etc/galaxy-cd/params.yml` (root, `0600`). Parameters holding secrets (a `password`, `secret`, `token`, ... in the name or in a key of the value, e.g. `private_token` in `src_galaxy_pulsar_configs`) go to `/etc/galaxy-cd/secret_params.yml` instead, encrypted with the Ansible Vault password `/etc/galaxy/vault_password` (from `src_galaxy_vault_password`); without that password the deployment fails rather than store them in plain text. `src_galaxy_vault_password` itself is never saved again.
+* It installs Ansible in `/opt/galaxy-cd/venv`, the playbook's roles and collections in `/var/lib/galaxy-cd/ansible`, the script `/usr/local/sbin/galaxy-cd`, and `galaxy-cd.service` with `galaxy-cd.timer`. The timer starts as the last step of the deployment; the first run is one interval later.
+* Every `src_galaxy_cd_interval` after the previous run ends, `galaxy-cd` runs `ansible-pull` as root: it updates `/var/lib/galaxy-cd/checkout` to `src_galaxy_cd_branch` and runs `galaxysrv.yml` with the saved parameters, the vault password file `/etc/galaxy/vault_password` (`ANSIBLE_VAULT_PASSWORD_FILE`), `src_galaxy_bootstrap=false` and `--tags rabbitmq,galaxy_config_files`. Besides the always-run tasks (variables, validation, admin facts) that is only `tasks/rabbitmq.yml` and the Galaxy role's config files (`galaxy.yml`, `job_conf.yml`, TPV, `user_preferences_extra_conf.yml`). Packages, Nginx, the database and the Galaxy code are left alone. A test (`tests/unit/test_cd.py`) fails if a task touching the onboarding files is not covered by these tags.
+* When the branch has no new commits the playbook is skipped (`--only-if-changed`), unless the previous run failed. Galaxy is restarted gracefully (`galaxyctl graceful`) by the playbook's handlers, and only when a config file changed.
+* A lock (`/run/lock/galaxy-cd.lock`) keeps runs from overlapping; a run that finds it taken exits without doing anything.
+
+Check the last run:
+
+```bash
+systemctl status galaxy-cd.service      # "failed" if the last run failed
+journalctl -u galaxy-cd -n 100          # its output; ends in "galaxy-cd: OK: ..." or "galaxy-cd: FAILED: ..."
+systemctl list-timers galaxy-cd.timer   # when it runs next
+```
+
+Run it now: `sudo systemctl start galaxy-cd.service`. Turn it off: `sudo systemctl disable --now galaxy-cd.timer` (turn it on again with `enable --now`).
+
+**Private repository.** Create a read-only deploy key for the repository, set `src_galaxy_cd_repo` to the repository's SSH URL, and put the private key on the workspace, readable by root only:
+
+```bash
+sudo install -m 0600 -o root -g root /path/to/deploy_key /etc/galaxy-cd/deploy_key
+```
+
+galaxy-cd uses it when it exists (`--private-key`, accepting the host key on first use).
+
+Limits: the saved parameters are those of the deployment; changing a component parameter still needs a new workspace. A change to `requirements.yml` is installed one run after it is fetched (that run may fail; the next one retries). Why not a GitHub Actions deploy job: it would need inbound SSH to the workspace and a deploy key with access to it on GitHub, which SRC workspaces do not offer by default.
 
 ## Maintenance
 

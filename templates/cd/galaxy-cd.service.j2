@@ -1,0 +1,15 @@
+# Managed by the src-component-galaxy playbook (galaxysrv.yml); local changes are overwritten.
+# Applies merged changes of the playbook repository to this Galaxy (ansible-pull); see the
+# README section "Continuous deployment". Started by galaxy-cd.timer.
+[Unit]
+Description=Galaxy continuous deployment (ansible-pull)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ _galaxy_cd_script }}
+SyslogIdentifier=galaxy-cd
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=1h

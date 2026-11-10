@@ -1,0 +1,13 @@
+# Managed by the src-component-galaxy playbook (galaxysrv.yml); local changes are overwritten.
+[Unit]
+Description=Run Galaxy continuous deployment (galaxy-cd.service) every {{ _galaxy_cd_interval }}
+
+[Timer]
+# Counted from when the timer starts (end of the deployment, or boot) and from the end of the
+# previous run, so a run never starts while the deployment that set it up is still running.
+OnActiveSec={{ _galaxy_cd_interval }}
+OnUnitInactiveSec={{ _galaxy_cd_interval }}
+Unit=galaxy-cd.service
+
+[Install]
+WantedBy=timers.target

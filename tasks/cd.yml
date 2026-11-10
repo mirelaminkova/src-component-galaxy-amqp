@@ -1,0 +1,116 @@
+---
+# Continuous deployment (src_galaxy_cd, issue #22): a systemd timer runs galaxy-cd, which applies
+# merged changes of src_galaxy_cd_repo/src_galaxy_cd_branch with ansible-pull (see the README).
+# Included last in galaxysrv.yml and untagged, so CD runs (limited to _galaxy_cd_tags) skip it.
+
+- name: Check for the Ansible Vault password file
+  ansible.builtin.stat:
+    path: "{{ _galaxy_cd_vault_password_file }}"
+  register: _galaxy_cd_vault_password_stat
+
+- name: Parameters holding secrets need the vault password
+  ansible.builtin.assert:
+    that: _galaxy_cd_params.secret | length == 0 or _galaxy_cd_vault_password_stat.stat.exists
+    fail_msg: >-
+      src_galaxy_cd: {{ _galaxy_cd_params.secret | list | join(', ') }} hold secrets, which galaxy-cd only
+      stores vault-encrypted; set src_galaxy_vault_password so that {{ _galaxy_cd_vault_password_file }} exists.
+    quiet: true
+
+- name: Install python3-venv for the galaxy-cd Ansible
+  ansible.builtin.apt:
+    name: python3-venv
+    state: present
+
+- name: Create galaxy-cd directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ _galaxy_cd_config_dir }}", mode: "0700" }
+    - { path: "{{ _galaxy_cd_state_dir }}", mode: "0700" }
+    - { path: "{{ _galaxy_cd_venv | dirname }}", mode: "0755" }
+
+- name: Install Ansible for galaxy-cd
+  ansible.builtin.pip:
+    name: "{{ _galaxy_cd_pip_packages }}"
+    virtualenv: "{{ _galaxy_cd_venv }}"
+    virtualenv_command: /usr/bin/python3 -m venv
+
+# Roles and collections of the deployed commit, so the first CD run has them; later runs install
+# the requirements.yml of their checkout.
+- name: Install the playbook's roles and collections for galaxy-cd
+  ansible.builtin.command:
+    argv:
+      - "{{ _galaxy_cd_venv }}/bin/ansible-galaxy"
+      - install
+      - -r
+      - "{{ playbook_dir }}/requirements.yml"
+  environment:
+    ANSIBLE_ROLES_PATH: "{{ _galaxy_cd_state_dir }}/ansible/roles"
+    ANSIBLE_COLLECTIONS_PATH: "{{ _galaxy_cd_state_dir }}/ansible/collections"
+  register: _galaxy_cd_requirements
+  changed_when: "'installed successfully' in _galaxy_cd_requirements.stdout"
+
+- name: Save the component parameters without secrets
+  ansible.builtin.template:
+    src: templates/cd/params.yml.j2
+    dest: "{{ _galaxy_cd_config_dir }}/params.yml"
+    owner: root
+    group: root
+    mode: "0600"
+
+# Secrets go to ansible-vault on stdin (not on its command line, which every local user can read).
+- name: Save the component parameters holding secrets, vault-encrypted
+  ansible.builtin.command:
+    argv:
+      - "{{ _galaxy_cd_venv }}/bin/ansible-vault"
+      - encrypt
+      - --output
+      - "{{ _galaxy_cd_config_dir }}/secret_params.yml"
+      - "-"
+    stdin: "{{ _galaxy_cd_params.secret | to_nice_yaml }}"
+  environment:
+    ANSIBLE_VAULT_PASSWORD_FILE: "{{ _galaxy_cd_vault_password_file }}"
+  when: _galaxy_cd_params.secret | length > 0
+  changed_when: true
+  no_log: true
+
+- name: Remove stale vault-encrypted parameters
+  ansible.builtin.file:
+    path: "{{ _galaxy_cd_config_dir }}/secret_params.yml"
+    state: absent
+  when: _galaxy_cd_params.secret | length == 0
+
+- name: Install the galaxy-cd script
+  ansible.builtin.template:
+    src: templates/cd/galaxy-cd.sh.j2
+    dest: "{{ _galaxy_cd_script }}"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the galaxy-cd service
+  ansible.builtin.template:
+    src: templates/cd/galaxy-cd.service.j2
+    dest: /etc/systemd/system/galaxy-cd.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the galaxy-cd timer
+  ansible.builtin.template:
+    src: templates/cd/galaxy-cd.timer.j2
+    dest: /etc/systemd/system/galaxy-cd.timer
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable and start the galaxy-cd timer
+  ansible.builtin.systemd_service:
+    name: galaxy-cd.timer
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -8,6 +8,7 @@ from filter_plugins.src_galaxy import (
     galaxy_web_client_requirement,
     pulsar_amqp_config_errors,
     pulsar_amqp_configs,
+    src_cd_params,
     src_config_list,
 )
 
@@ -77,6 +78,7 @@ def test_filters_are_registered():
         "pulsar_amqp_configs": pulsar_amqp_configs,
         "pulsar_amqp_config_errors": pulsar_amqp_config_errors,
         "galaxy_web_client_requirement": galaxy_web_client_requirement,
+        "src_cd_params": src_cd_params,
     }
 
 
