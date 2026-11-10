@@ -6,6 +6,9 @@ whitespace fixers, yamllint and ansible-lint).
 * `base/`: the onboarding files in this repository's layout, with one endpoint (`sk01`)
   already onboarded. `base/secret_group_vars/pulsar.yml` is encrypted with
   `vault-password.txt`.
+* `base-destinations.yml`: the TPV destination of `sk01`. The tests copy the repository's
+  `files/galaxy/tpv/` and append it to `destinations.yml.j2`, so the diffs' TPV hunks apply
+  at the end of the onboarding section, whatever endpoints the repository already has.
 * `onboard-egi01.diff`: modelled on usegalaxy-eu/infrastructure-playbook#872 (literal
   workspace name in `amqp_url` and `galaxy_url`).
 * `onboard-eosc01.diff`: modelled on usegalaxy-eu/infrastructure-playbook#1384

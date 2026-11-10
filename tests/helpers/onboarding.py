@@ -23,9 +23,21 @@ SECRETS_DIR = "secret_group_vars"
 VAULT_HEADER = b"$ANSIBLE_VAULT;"
 
 
-def apply_diffs(source: Path, diffs: list[Path], dest: Path) -> Path:
-    """Copy ``source`` to ``dest`` and apply each unified diff with ``git apply``."""
+TPV_DIR = "files/galaxy/tpv"
+TPV_DESTINATIONS = f"{TPV_DIR}/destinations.yml.j2"
+
+
+def apply_diffs(source: Path, diffs: list[Path], dest: Path, onboarded_destinations: Path) -> Path:
+    """Copy ``source`` to ``dest`` and apply each unified diff with ``git apply``.
+
+    The repository's TPV files are copied too, with ``onboarded_destinations`` (the
+    destinations ``source`` has already onboarded) appended to destinations.yml.j2, so the
+    diffs' TPV hunks apply at the end of the onboarding section whatever the repository holds.
+    """
     shutil.copytree(source, dest)
+    shutil.copytree(REPO_ROOT / TPV_DIR, dest / TPV_DIR)
+    with (dest / TPV_DESTINATIONS).open("a") as destinations:
+        destinations.write(onboarded_destinations.read_text())
     for diff in diffs:
         subprocess.run(  # noqa: S603 - fixed command, paths from the test suite
             ["git", "apply", "--whitespace=error-all", str(diff)],  # noqa: S607

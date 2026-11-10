@@ -31,7 +31,12 @@ from tpv.rules import gateway
 from tests.helpers.ansible_vars import resolve_vars
 from tests.helpers.render import render_template
 
-VARS_FILES = ["internal_vars.yml", "src_galaxy_vars.yml", "rabbitmq_vars.yml"]
+VARS_FILES = [
+    "internal_vars.yml",
+    "src_galaxy_vars.yml",
+    "rabbitmq_vars.yml",
+    "byoc_onboarding_vars.yml",
+]
 PREF_KEY = "distributed_compute|remote_resources"
 TPV_FILES = ["tool_defaults", "destinations"]
 
@@ -72,6 +77,7 @@ def _variables(params, config_dir):
         "_galaxy_tpv_config_errors",
         "_galaxy_rabbitmq_local_port",
         "_galaxy_infrastructure_url",
+        "_galaxy_byoc_runners",
     ]
     return {
         **{name: resolve(name) for name in names},

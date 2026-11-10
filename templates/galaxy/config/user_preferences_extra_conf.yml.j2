@@ -42,8 +42,9 @@ preferences:
     byoc_pulsar:
         description: >
             Bring your own Pulsar endpoint to Galaxy. You can add here your Pulsar credentials and specifications.
-            This is an experimental feature: the values are stored, but Galaxy does not schedule jobs to your Pulsar yet.
-            Contact the administrators if you want to learn more about it.
+            Once the administrators have reviewed and merged your endpoint, Galaxy's job scheduling systems will take your Pulsar into account {{ _galaxy_byoc_schedule_delay }}
+            and schedule appropriate jobs to your compute resources; you can then pick it under "Use distributed compute resources".
+            This is an experimental feature. Contact the administrators if you want to learn more about it.
         inputs:
             - name: username
               label: RabbitMQ custom username (e.g. mypulsarendpoint).

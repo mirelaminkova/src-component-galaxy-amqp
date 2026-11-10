@@ -20,6 +20,7 @@ BASE_VARS = {
     "_galaxy_pulsar_amqp_configs": [],
     "_galaxy_byoc_runners": [],
     "_galaxy_byoc_preference_options": [],
+    "_galaxy_byoc_schedule_delay": "within about 15 minutes",
 }
 
 REMOTE_DESTINATIONS = [

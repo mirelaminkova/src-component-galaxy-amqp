@@ -2,6 +2,7 @@
 
 import pytest
 
+from tests.helpers.ansible_vars import resolve_vars
 from tests.helpers.render import render_yaml
 
 TEMPLATE = "galaxy/config/user_preferences_extra_conf.yml.j2"
@@ -11,6 +12,7 @@ BASE_VARS = {
     "_galaxy_remote_destinations": [],
     "_galaxy_byoc_pulsar": False,
     "_galaxy_byoc_preference_options": [],
+    "_galaxy_byoc_schedule_delay": "within about 15 minutes",
 }
 REMOTES = [
     {"id": "remote_hpc_basic", "label": "HPC cluster", "tag": "hpc-pulsar"},
@@ -63,6 +65,8 @@ def test_byoc_pulsar_form_when_enabled():
     inputs = {i["name"]: i for i in form["inputs"]}
 
     assert "experimental" in form["description"]
+    assert "within about 15 minutes" in form["description"]
+    assert "does not schedule jobs" not in form["description"]
     assert list(inputs) == [
         "username",
         "password",
@@ -140,7 +144,7 @@ def test_onboarded_options_follow_the_generated_ones():
 
     assert form["distributed_compute"]["inputs"][0]["options"] == [
         DEFAULT_OPTION,
-        ["HPC cluster", "remote_hpc_basic"],
+        ["HPC cluster", "hpc-pulsar"],
         *BYOC_OPTIONS,
     ]
 
@@ -151,15 +155,49 @@ def test_onboarded_options_alone_show_the_form():
     assert form["distributed_compute"]["inputs"][0]["options"] == [DEFAULT_OPTION, *BYOC_OPTIONS]
 
 
-def test_onboarded_option_with_a_generated_id_is_not_listed_twice():
-    duplicate = [["Same id, other label", "remote_hpc_basic"], *BYOC_OPTIONS]
+def test_onboarded_option_with_a_generated_tag_is_not_listed_twice():
+    duplicate = [["Same tag, other label", "hpc-pulsar"], *BYOC_OPTIONS]
     form = _prefs(
         _galaxy_remote_destinations=REMOTES[:1], _galaxy_byoc_preference_options=duplicate
     )
 
     assert [o[1] for o in form["distributed_compute"]["inputs"][0]["options"]] == [
         "None",
-        "remote_hpc_basic",
+        "hpc-pulsar",
         "eosc-eu-node-01-pulsar",
         "egi-pulsar",
     ]
+
+
+@pytest.mark.parametrize(
+    ("params", "expected"),
+    [
+        ({}, "after the next deployment of this Galaxy"),
+        (
+            {"src_galaxy_cd": "false", "src_galaxy_cd_interval": "5"},
+            "after the next deployment of this Galaxy",
+        ),
+        ({"src_galaxy_cd": "true"}, "within about 15 minutes"),
+        ({"src_galaxy_cd": "true", "src_galaxy_cd_interval": ""}, "within about 15 minutes"),
+        ({"src_galaxy_cd": "true", "src_galaxy_cd_interval": " 30 "}, "within about 30 minutes"),
+        ({"src_galaxy_cd": "true", "src_galaxy_cd_interval": "2h"}, "within about 2h"),
+    ],
+    ids=["no-cd", "cd-off", "cd-default", "cd-empty", "cd-minutes", "cd-span"],
+)
+def test_byoc_description_states_when_jobs_start(params, expected):
+    resolve = resolve_vars(
+        [
+            "internal_vars.yml",
+            "src_galaxy_vars.yml",
+            "rabbitmq_vars.yml",
+            "byoc_onboarding_vars.yml",
+        ],
+        params,
+    )
+    delay = resolve("_galaxy_byoc_schedule_delay")
+    form = _prefs(_galaxy_byoc_pulsar=True, _galaxy_byoc_schedule_delay=delay)["byoc_pulsar"]
+
+    assert delay == expected
+    assert f"take your Pulsar into account {expected} and schedule" in " ".join(
+        form["description"].split()
+    )

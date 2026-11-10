@@ -8,6 +8,7 @@ throwaway Vault password; the tests load the result the way tasks/byoc_onboardin
 """
 
 import difflib
+import logging
 import re
 import subprocess
 from pathlib import Path
@@ -15,6 +16,9 @@ from pathlib import Path
 import pytest
 import yaml
 from ansible.errors import AnsibleError
+from tpv.commands.dryrunner import TPVDryRunner
+from tpv.commands.linter import TPVConfigLinter
+from tpv.commands.test import mock_galaxy
 
 from filter_plugins.byoc_onboarding import (
     RUNNER_LOAD,
@@ -25,6 +29,7 @@ from filter_plugins.byoc_onboarding import (
 from tests.helpers.ansible_vars import REPO_ROOT, resolve_vars
 from tests.helpers.onboarding import (
     FILES,
+    TPV_DESTINATIONS,
     apply_diffs,
     decrypt_command,
     decrypt_secrets,
@@ -32,11 +37,13 @@ from tests.helpers.onboarding import (
     plaintext_secret_files,
     secret_files,
 )
-from tests.helpers.render import render_yaml
+from tests.helpers.render import make_environment, render_template, render_yaml
 
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "byoc_onboarding"
 VAULT_PASSWORD_FILE = FIXTURES / "vault-password.txt"
 DIFFS = [FIXTURES / "onboard-egi01.diff", FIXTURES / "onboard-eosc01.diff"]
+# TPV destinations of the endpoint (sk01) the fixture base already has.
+ONBOARDED_DESTINATIONS = FIXTURES / "base-destinations.yml"
 VARS_FILES = [
     "internal_vars.yml",
     "src_galaxy_vars.yml",
@@ -77,7 +84,7 @@ def _runner(endpoint_id, password=None, host=FQDN + ":5671", **params):
 
 
 def _onboarded(tmp_path, diffs=DIFFS):
-    return apply_diffs(FIXTURES / "base", diffs, tmp_path / "repo")
+    return apply_diffs(FIXTURES / "base", diffs, tmp_path / "repo", ONBOARDED_DESTINATIONS)
 
 
 def _resolver(root, **params):
@@ -85,14 +92,69 @@ def _resolver(root, **params):
     return resolve_vars(VARS_FILES, {**PARAMS, **params}, templated)
 
 
-def _raw_errors(root, destinations=None):
+def _raw_errors(root):
     files = load_files(root)
     return byoc_onboarding_errors(
         files["_galaxy_onboarding_mq"]["rabbitmq_users"],
         files["_galaxy_onboarding_jobconf"]["galaxy_jobconf"]["plugins"],
         preference_options(files["_galaxy_onboarding_preferences"]),
-        destinations,
+        _tpv_destinations(root),
     )
+
+
+# Variables the job config and TPV templates use, as the playbook resolves them.
+TEMPLATE_VARS = [
+    "_galaxy_jobs_default",
+    "_galaxy_use_interactive_tools",
+    "_galaxy_has_pulsar",
+    "_galaxy_pulsar_configs_raw",
+    "_galaxy_pulsar_amqp_configs",
+    "_galaxy_tpv_tool_mappings",
+    "_galaxy_rabbitmq_local_port",
+    "_galaxy_infrastructure_url",
+    "_galaxy_byoc_runners",
+]
+
+
+def _template_vars(resolve, config_dir):
+    return {
+        **{name: resolve(name) for name in TEMPLATE_VARS},
+        "_galaxy_tpv_config_dir": str(config_dir),
+        "_galaxy_rabbitmq_passwords": {"galaxy": "GalaxyPw0123456789"},
+        "galaxy_mutable_data_dir": "/srv/galaxy/datadir",
+        "apptainer_volumes": ["$galaxy_root:ro", "$working_directory:rw"],
+    }
+
+
+def _render_configs(root, resolve, config_dir):
+    """Render job_conf.yml and the TPV files of ``root`` into ``config_dir``; return TPV paths."""
+    config_dir.mkdir(parents=True, exist_ok=True)
+    variables = _template_vars(resolve, config_dir)
+    (config_dir / "job_conf.yml").write_text(
+        render_template("galaxy/config/job_conf.yml.j2", variables)
+    )
+    paths = []
+    for name in ("tool_defaults", "destinations"):
+        source = (root / f"files/galaxy/tpv/{name}.yml.j2").read_text()
+        path = config_dir / f"{name}.yml"
+        path.write_text(_render_text(source, variables))
+        paths.append(str(path))
+    return paths
+
+
+def _render_text(source, variables):
+    return make_environment().from_string(source).render(**variables)
+
+
+def _tpv_destinations(root):
+    """The TPV destinations of ``root`` (repository defaults: no component Pulsars)."""
+    if not (root / TPV_DESTINATIONS).exists():
+        return None
+    resolve = resolve_vars(VARS_FILES, {"src_galaxy_rabbitmq": "true"})
+    variables = _template_vars(resolve, Path("/srv/tpv"))
+    return yaml.safe_load(_render_text((root / TPV_DESTINATIONS).read_text(), variables))[
+        "destinations"
+    ]
 
 
 def _tasks(path):
@@ -114,7 +176,7 @@ def _task(name):
 
 
 def test_onboarding_diffs_touch_the_eu_files_like_the_example_prs():
-    expected = {*FILES.values(), "secret_group_vars/pulsar.yml"}
+    expected = {*FILES.values(), TPV_DESTINATIONS, "secret_group_vars/pulsar.yml"}
     for diff in DIFFS:
         touched = set(re.findall(r"^\+\+\+ b/(\S+)$", diff.read_text(), flags=re.MULTILINE))
         assert touched == expected
@@ -189,10 +251,7 @@ def test_onboarded_job_config_has_the_runners(tmp_path):
     secrets = decrypt_secrets(tmp_path / "repo", VAULT_PASSWORD_FILE)
     conf = render_yaml(
         "galaxy/config/job_conf.yml.j2",
-        {
-            **_job_conf_vars(),
-            "_galaxy_byoc_runners": resolve("_galaxy_byoc_runners"),
-        },
+        _template_vars(resolve, tmp_path / "config"),
     )
 
     eosc = conf["runners"]["pulsar_eu_eosc01"]
@@ -221,18 +280,89 @@ def test_onboarded_endpoints_are_in_the_dropdown(tmp_path):
         {
             "_galaxy_ibridges_enabled": False,
             "_galaxy_byoc_pulsar": False,
-            "_galaxy_remote_destinations": [{"id": "amqp_hpc", "label": "HPC"}],
+            "_galaxy_remote_destinations": [
+                {"id": "amqp_hpc", "label": "HPC", "tag": "hpc-pulsar"}
+            ],
             "_galaxy_byoc_preference_options": resolve("_galaxy_byoc_preference_options"),
         },
     )
 
     assert prefs["preferences"]["distributed_compute"]["inputs"][0]["options"] == [
         ["default - Galaxy will decide where to put your job", "None"],
-        ["HPC", "amqp_hpc"],
+        ["HPC", "hpc-pulsar"],
         ["Bratislava (Slovakia) - IISAS", "sk-pulsar"],
         ["Bari (Italy) - INFN", "egi-pulsar"],
         ["EOSC EU Node 01", "eosc-eu-node-01-pulsar"],
     ]
+
+
+def _tool(tool_id="cat1"):
+    """A tool stand-in with the attributes the TPV rules read (see test_tpv.py)."""
+    tool = mock_galaxy.Tool(tool_id)
+    tool.old_id = tool_id
+    tool.all_ids = [tool_id]
+    tool.tool_type = "default"
+    tool.tool_type_local = False
+    tool.requires_galaxy_python_environment = False
+    return tool
+
+
+def _user(choice=None):
+    user = mock_galaxy.User("ada", "ada@example.org")
+    user.extra_preferences = {"distributed_compute|remote_resources": choice}
+    return user
+
+
+def test_onboarded_tpv_config_lints(tmp_path, caplog):
+    root = _onboarded(tmp_path)
+    linter = TPVConfigLinter(
+        _render_configs(root, _resolver(root), tmp_path / "config"),
+        ignore=[],
+        preserve_temp_code=False,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        linter.lint()
+
+    assert linter.errors == []
+    # TPV 3.1.x has no py.typed marker: mypy flags its own imports (see test_tpv.py).
+    assert [w for w in linter.warnings if w[0] != "T103"] == []
+
+
+@pytest.mark.parametrize(
+    ("tag", "destination", "runner"),
+    [
+        ("sk-pulsar", "pulsar_sk01_tpv", "pulsar_eu_sk01"),
+        ("egi-pulsar", "pulsar_egi01_tpv", "pulsar_eu_egi01"),
+        ("eosc-eu-node-01-pulsar", "pulsar_eosc01_tpv", "pulsar_eu_eosc01"),
+    ],
+)
+def test_user_picking_the_tag_routes_to_the_onboarded_destination(
+    tmp_path, tag, destination, runner
+):
+    """TPV dry run through the rendered job_conf.yml, as Galaxy maps a job."""
+    root = _onboarded(tmp_path)
+    _render_configs(root, _resolver(root), tmp_path / "config")
+    job_conf = str(tmp_path / "config" / "job_conf.yml")
+
+    routed = TPVDryRunner(job_conf, tool=_tool(), user=_user(tag)).run()
+
+    assert (routed.id, routed.runner) == (destination, runner)
+    # Galaxy's own job config loader accepts the runner with the params from job_conf.yml.
+    plugins = mock_galaxy.App(job_conf, create_model=True).job_config.runner_plugins
+    [plugin] = [p for p in plugins if p["id"] == runner]
+    assert plugin["load"] == RUNNER_LOAD
+    assert plugin["kwds"]["manager"] == "production"
+
+
+def test_onboarded_tags_route_nowhere_else(tmp_path):
+    root = _onboarded(tmp_path)
+    _render_configs(root, _resolver(root), tmp_path / "config")
+    job_conf = str(tmp_path / "config" / "job_conf.yml")
+
+    routed = TPVDryRunner(job_conf, tool=_tool(), user=_user("None")).run()
+
+    assert routed.id == "singularity"
 
 
 def test_wrong_vault_password_fails_decryption(tmp_path):
@@ -242,21 +372,6 @@ def test_wrong_vault_password_fails_decryption(tmp_path):
 
     with pytest.raises(subprocess.CalledProcessError):
         decrypt_secrets(root, wrong)
-
-
-def _job_conf_vars():
-    return {
-        "galaxy_mutable_data_dir": "/srv/galaxy/datadir",
-        "apptainer_volumes": ["$galaxy_root:ro"],
-        "_galaxy_use_interactive_tools": False,
-        "_galaxy_default_dispatcher": "default_dispatcher",
-        "_galaxy_jobs_default": "singularity",
-        "_galaxy_has_pulsar": False,
-        "_galaxy_pulsar_configs_raw": [],
-        "_galaxy_pulsar_tool_mappings": [],
-        "_galaxy_use_dispatcher": False,
-        "_galaxy_pulsar_amqp_configs": [],
-    }
 
 
 # --- negative: broken onboarding pull requests fail pytest -------------------------------
@@ -318,6 +433,39 @@ def test_plaintext_file_in_secret_group_vars_fails(tmp_path):
     assert plaintext_secret_files(root) == ["secret_group_vars/leak.yml"]
 
 
+DESTINATION_WITHOUT_RUNNER = [
+    "\n",
+    "  pulsar_ghost01_tpv:\n",
+    "    inherits: pulsar_default\n",
+    "    runner: pulsar_eu_ghost01\n",
+    "    scheduling:\n",
+    "      require:\n",
+    "        - ghost-pulsar\n",
+]
+OPTION_WITHOUT_DESTINATION = ['                  - ["Nowhere", nowhere-pulsar]\n']
+
+
+def test_destination_without_runner_fails_in_the_repository_files(tmp_path):
+    diff = _append_diff(tmp_path, "ghost.diff", TPV_DESTINATIONS, DESTINATION_WITHOUT_RUNNER)
+
+    assert _raw_errors(_onboarded(tmp_path, [*DIFFS, diff])) == [
+        f"{TPV} destination 'pulsar_ghost01_tpv': runner pulsar_eu_ghost01 is not in {JOB}"
+    ]
+
+
+def test_option_without_destination_fails_in_the_repository_files(tmp_path):
+    diff = _append_diff(
+        tmp_path,
+        "nowhere.diff",
+        FILES["_galaxy_onboarding_preferences"],
+        OPTION_WITHOUT_DESTINATION,
+    )
+
+    assert _raw_errors(_onboarded(tmp_path, [*DIFFS, diff])) == [
+        f"{TPV}: no destination requires the tag nowhere-pulsar offered in {PREFS}"
+    ]
+
+
 def test_destination_without_runner_fails():
     errors = byoc_onboarding_errors(
         [_mq_user("egi01")],
@@ -357,7 +505,12 @@ def test_destinations_must_be_a_mapping():
 
 
 def test_repository_onboarding_files_are_consistent():
+    assert _tpv_destinations(REPO_ROOT) is not None
     assert _raw_errors(REPO_ROOT) == []
+
+
+def test_tpv_destinations_are_optional(tmp_path):
+    assert _tpv_destinations(tmp_path) is None
 
 
 def test_repository_secret_group_vars_holds_only_vault_files():
