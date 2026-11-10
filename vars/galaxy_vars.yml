@@ -21,6 +21,10 @@ galaxy_group: galaxy
 galaxy_client_use_prebuilt: true
 galaxy_systemd_root: true
 galaxy_backup_configfiles: false
+# Mode of the config files the role writes (galaxy.yml, job_conf.yml, ...): they hold secrets
+# (remote_user_secret, the galaxy RabbitMQ password), so never world-readable. This is the
+# role's default, pinned here so it is not loosened by accident.
+galaxy_config_perms: "0640"
 
 # Defining the variables for galaxy/config
 user_preference_config_file: "{{ galaxy_config_dir }}/user_preferences_extra_conf.yml"

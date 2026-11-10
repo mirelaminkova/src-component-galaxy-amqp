@@ -6,6 +6,21 @@ runners:
   pulsar:
     load: galaxy.jobs.runners.pulsar:PulsarRESTJobRunner
 {% endif %}
+{% for pulsar in _galaxy_pulsar_amqp_configs %}
+  # Remote Pulsar "{{ pulsar.name }}" over AMQP (src_galaxy_pulsar_amqp_configs): one runner
+  # per RabbitMQ vhost. Galaxy connects as the galaxy user over plain AMQP on the loopback
+  # listener; the Pulsar connects as its own user over AMQPS.
+  {{ pulsar.runner }}:
+    load: galaxy.jobs.runners.pulsar:PulsarMQJobRunner
+    amqp_url: {{ ('pyamqp://galaxy:' ~ _galaxy_rabbitmq_passwords['galaxy'] ~ '@127.0.0.1:' ~ _galaxy_rabbitmq_local_port ~ '/' ~ pulsar.vhost) | to_json }}
+    galaxy_url: {{ _galaxy_infrastructure_url | to_json }}
+    manager: {{ pulsar.manager | to_json }}
+    amqp_acknowledge: true
+    amqp_ack_republish_time: 1200
+    amqp_consumer_timeout: 2.0
+    amqp_publish_retry: true
+    amqp_publish_retry_max_retries: 60
+{% endfor %}
 
 execution:
   default: {{ _galaxy_default_dispatcher if _galaxy_use_dispatcher else _galaxy_jobs_default }}
@@ -110,12 +125,25 @@ execution:
 
 {% endfor %}
 {% endif %}
+{% for pulsar in _galaxy_pulsar_amqp_configs %}
+
+    {{ pulsar.environment }}:
+      runner: {{ pulsar.runner }}
+      jobs_directory: {{ pulsar.jobs_directory | to_json }}
+      default_file_action: remote_transfer
+      dependency_resolution: {{ pulsar.dependency_resolution }}
+      rewrite_parameters: true
+      remote_metadata: false
+      outputs_to_working_directory: false
+      docker_enabled: {{ pulsar.docker_enabled | to_json }}
+      singularity_enabled: {{ pulsar.singularity_enabled | to_json }}
+{% endfor %}
 
 tools:
   - class: local  # expression tools, upload, etc - not parameterized for remote execution
     environment: local
 
-{% if _galaxy_has_pulsar and _galaxy_pulsar_tool_mappings | length > 0 %}
+{% if (_galaxy_has_pulsar or _galaxy_pulsar_amqp_configs | length > 0) and _galaxy_pulsar_tool_mappings | length > 0 %}
 {% for tool_mapping in _galaxy_pulsar_tool_mappings %}
   - id: {{ tool_mapping.tool_id }}
     environment: {{ tool_mapping.environment }}

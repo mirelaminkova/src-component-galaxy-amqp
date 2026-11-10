@@ -9,3 +9,6 @@ src_galaxy_cvmfs: 'true'
 src_galaxy_jobs_default: singularity
 src_galaxy_byoc_pulsar: 'false'
 src_galaxy_rabbitmq: 'false'
+# Remote Pulsars over AMQP (needs src_galaxy_rabbitmq: 'true'), same format as src_galaxy_pulsar_configs, e.g.
+# src_galaxy_pulsar_amqp_configs: "[{name: hpc, label: Our HPC cluster, docker_enabled: true}]"
+src_galaxy_pulsar_amqp_configs: ''

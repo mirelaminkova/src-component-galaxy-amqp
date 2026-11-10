@@ -100,6 +100,7 @@ def test_every_destination_id_is_a_job_conf_environment():
             "_galaxy_has_pulsar": evaluate("_galaxy_has_pulsar"),
             "_galaxy_pulsar_configs_raw": evaluate("_galaxy_pulsar_configs_raw"),
             "_galaxy_pulsar_tool_mappings": evaluate("_galaxy_pulsar_tool_mappings"),
+            "_galaxy_pulsar_amqp_configs": evaluate("_galaxy_pulsar_amqp_configs"),
         },
     )
     environments = job_conf["execution"]["environments"]

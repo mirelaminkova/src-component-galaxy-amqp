@@ -16,3 +16,7 @@ ssl_options.versions.{{ loop.index }} = {{ version }}
 
 # Erlang distribution (used by rabbitmqctl) only on the loopback interface.
 distribution.listener.interface = 127.0.0.1
+
+# The galaxy user (its password is in Galaxy's job_conf.yml) may only connect from this host;
+# remote Pulsar servers use their own users over AMQPS.
+loopback_users.galaxy = true

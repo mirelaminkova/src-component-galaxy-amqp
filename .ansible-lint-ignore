@@ -1,3 +1,1 @@
-# Folded multi-line Jinja blocks parsing Pulsar component parameters; the suggested
-# rewrite does not change behaviour and the parsing is reworked in issue #5.
-vars/src_galaxy_vars.yml jinja[spacing]
+# Accepted ansible-lint findings, one per line: <path> <rule>

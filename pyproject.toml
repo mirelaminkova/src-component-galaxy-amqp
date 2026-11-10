@@ -16,9 +16,9 @@ addopts = [
 
 [tool.coverage.run]
 branch = true
-# What is measured: the test helper package and the Python modules rendered from
-# repo templates (e.g. templates/default_dispatch.py.j2 -> tests/rendered/).
-source_dirs = ["tests/helpers", "tests/rendered"]
+# What is measured: the playbook's filter plugins, the test helper package and the Python
+# modules rendered from repo templates (e.g. templates/default_dispatch.py.j2 -> tests/rendered/).
+source_dirs = ["filter_plugins", "tests/helpers", "tests/rendered"]
 
 [tool.coverage.report]
 show_missing = true

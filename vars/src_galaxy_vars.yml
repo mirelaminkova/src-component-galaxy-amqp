@@ -36,27 +36,20 @@ _galaxy_workflow_files: "{{ src_galaxy_workflow_files | default('') | split(',')
 _galaxy_pulsar_configs_input: "{{ src_galaxy_pulsar_configs | default('', true) }}"
 _galaxy_pulsar_tool_mappings_input: "{{ src_galaxy_pulsar_tool_mappings | default('', true) }}"
 
-# Parse Pulsar configs
-# The Pulsar config redirects users to copy and pass yml strings via the component vars. The config normalises the passed strings
-_galaxy_pulsar_configs_raw: >-
-  {%- if _galaxy_pulsar_configs_input == '' or _galaxy_pulsar_configs_input == '[]' -%}
-  {{ [] }}
-  {%- else -%}
-    {%- set step1 = _galaxy_pulsar_configs_input | regex_replace('([{,]\s*)(\w+):', '\\1"\\2":') -%}
-    {%- set step2 = step1 | regex_replace(':\s*([^,\[\]{}"\'\s][^,\[\]{}]*?)(\s*[,}\]])', ': "\\1"\\2') -%}
-    {%- set step3 = step2 | regex_replace(':\s*"(true|false)"', ': \\1') -%}
-    {{ step3 | from_json }}
-  {%- endif -%}
+# Parse the Pulsar parameters. SRC passes them as strings in a relaxed YAML flow style
+# (e.g. "[{name: hpc, url: https://...}]"); the src_config_list filter
+# (filter_plugins/src_galaxy.py) turns them into lists of dicts and fails on malformed input.
+_galaxy_pulsar_configs_raw: "{{ _galaxy_pulsar_configs_input | src_config_list('src_galaxy_pulsar_configs') }}"
+_galaxy_pulsar_tool_mappings: "{{ _galaxy_pulsar_tool_mappings_input | src_config_list('src_galaxy_pulsar_tool_mappings') }}"
 
-# Parse tool mappings
-_galaxy_pulsar_tool_mappings: >-
-  {%- if _galaxy_pulsar_tool_mappings_input == '' or _galaxy_pulsar_tool_mappings_input == '[]' -%}
-  {{ [] }}
-  {%- else -%}
-    {%- set step1 = _galaxy_pulsar_tool_mappings_input | regex_replace('([{,]\s*)(\w+):', '\\1"\\2":') -%}
-    {%- set step2 = step1 | regex_replace(':\s*([^,\[\]{}"\'\s][^,\[\]{}]*?)(\s*[,}\]])', ': "\\1"\\2') -%}
-    {{ step2 | from_json }}
-  {%- endif -%}
+# Remote Pulsars connected over AMQP (PulsarMQJobRunner, issue #4). Entries are validated in
+# tasks/set_config.yml (_galaxy_pulsar_amqp_config_errors must be empty); _galaxy_pulsar_amqp_configs
+# adds defaults and the derived vhost (/pulsar/<name>), runner (pulsar_mq_<name>) and
+# environment (amqp_<name>) names.
+_galaxy_pulsar_amqp_configs_list: >-
+  {{ src_galaxy_pulsar_amqp_configs | default('', true) | src_config_list('src_galaxy_pulsar_amqp_configs') }}
+_galaxy_pulsar_amqp_config_errors: "{{ _galaxy_pulsar_amqp_configs_list | pulsar_amqp_config_errors }}"
+_galaxy_pulsar_amqp_configs: "{{ _galaxy_pulsar_amqp_configs_list | pulsar_amqp_configs }}"
 
 # Check if there are  pulsar configs
 _galaxy_has_pulsar: "{{ (_galaxy_pulsar_configs_raw | length > 0) | bool }}"
@@ -68,12 +61,16 @@ _galaxy_has_pulsar: "{{ (_galaxy_pulsar_configs_raw | length > 0) | bool }}"
 # Remote destinations users can pick under "Use distributed compute resources".
 # id: the `remote_<name>_basic` environment written by job_conf.yml.j2 (keep the
 # name logic in sync); label: the config's `label` key, or the host of its URL.
+# AMQP Pulsars follow as `amqp_<name>`, labelled with their `label` or `name`.
 _galaxy_remote_destinations: >-
   {%- set ns = namespace(destinations=[]) -%}
   {%- for pulsar in _galaxy_pulsar_configs_raw -%}
     {%- set name = pulsar.name | default(pulsar.url | replace('https://', '') | replace('http://', '') | replace('.', '-') | replace('/', '-')) -%}
     {%- set host = pulsar.url | regex_replace('^[a-zA-Z][a-zA-Z0-9+.-]*://', '') | regex_replace('[/:].*$', '') -%}
     {%- set ns.destinations = ns.destinations + [{'id': 'remote_' ~ name ~ '_basic', 'label': pulsar.label | default(host, true)}] -%}
+  {%- endfor -%}
+  {%- for pulsar in _galaxy_pulsar_amqp_configs -%}
+    {%- set ns.destinations = ns.destinations + [{'id': pulsar.environment, 'label': pulsar.label}] -%}
   {%- endfor -%}
   {{ ns.destinations }}
 # Route jobs through the default_dispatcher rule when there is anything to dispatch.

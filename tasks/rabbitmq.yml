@@ -109,9 +109,12 @@
       ListenStream=
       ListenStream=127.0.0.1:4369
 
+# python3-requests: imported by community.rabbitmq.rabbitmq_vhost on the target.
 - name: Install RabbitMQ
   ansible.builtin.apt:
-    name: rabbitmq-server
+    name:
+      - rabbitmq-server
+      - python3-requests
     state: present
 
 # Compare the live socket rather than the drop-in's change status, so a run that failed after
@@ -173,12 +176,16 @@
     group: root
     mode: "0700"
 
-# Existing password files are kept, so re-runs are idempotent.
-- name: Generate passwords for new RabbitMQ users
+# Generated passwords: existing files are kept, so re-runs are idempotent.
+# Passwords given in src_galaxy_pulsar_amqp_configs (_galaxy_rabbitmq_fixed_passwords) overwrite
+# the file, so changing the parameter changes the password.
+- name: Write passwords of RabbitMQ users
   ansible.builtin.copy:
     dest: "{{ _galaxy_rabbitmq_secrets_dir }}/{{ item.name }}.pass"
-    content: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_letters', 'digits'], length=32) }}"
-    force: false
+    content: >-
+      {{ _galaxy_rabbitmq_fixed_passwords[item.name] | default(lookup('ansible.builtin.password', '/dev/null',
+         chars=['ascii_letters', 'digits'], length=32)) }}
+    force: "{{ item.name in _galaxy_rabbitmq_fixed_passwords }}"
     owner: root
     group: root
     mode: "0600"
@@ -203,6 +210,19 @@
     _galaxy_rabbitmq_passwords: >-
       {{ dict(_galaxy_rabbitmq_password_files.results | map(attribute='item.name')
               | zip(_galaxy_rabbitmq_password_files.results | map(attribute='content') | map('b64decode'))) }}
+  no_log: true
+
+# What the Pulsar admin pastes into Pulsar's app.yml; contains the Pulsar user's password.
+- name: Write the Pulsar app.yml settings for each AMQP Pulsar
+  ansible.builtin.template:
+    src: templates/rabbitmq/pulsar_amqp_app.yml.j2
+    dest: "{{ _galaxy_rabbitmq_secrets_dir }}/pulsar_{{ item.name }}.txt"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ _galaxy_pulsar_amqp_configs }}"
+  loop_control:
+    label: "{{ item.name }}"
   no_log: true
 
 - name: List existing RabbitMQ users
