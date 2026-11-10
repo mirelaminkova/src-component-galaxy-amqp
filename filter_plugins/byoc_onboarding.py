@@ -15,10 +15,13 @@ adds one endpoint ``<id>`` to these files:
 
 :func:`byoc_onboarding_errors` checks that the files fit together. It runs in two modes:
 
-* raw (``endpoints`` is None): on the files as committed, in CI. Passwords must be
-  references to the vault variable, never literal values.
-* resolved (``endpoints`` given): at deploy time on the values Ansible resolved. The
-  ``amqp_url`` must point at this host's RabbitMQ and ``galaxy_url`` at this Galaxy.
+* raw (``resolved`` false): on the files as committed, in CI. Passwords must be references
+  to the vault variable, never literal values, and labels and names must not contain Jinja.
+* resolved: at deploy time on the values Ansible resolved; passwords must be URL-safe.
+
+:func:`byoc_runners` then points each runner at this Galaxy: an ``amqp_url`` copied from
+usegalaxy.eu (``mq.galaxyproject.eu``) is rebuilt with this host's RabbitMQ, and
+``galaxy_url`` is always this Galaxy's URL.
 
 No message ever contains a password or an ``amqp_url``.
 """
@@ -32,13 +35,18 @@ _ID = r"[a-z0-9_]+"
 _MQ_USER = re.compile(rf"galaxy_({_ID})")
 _RUNNER_ID = re.compile(rf"pulsar_eu_({_ID})")
 _TAG = re.compile(r"[A-Za-z0-9_.-]+")
+_DESTINATION = re.compile(r"[A-Za-z0-9_]+")
 _SECRET_NAME = re.compile(rf"rabbitmq_password_galaxy_{_ID}")
+# Runner params become keys of the runner in job_conf.yml; `id` and `load` are the runner's own.
+_PARAM_KEY = re.compile(r"[a-z][a-z0-9_]*")
+_RESERVED_PARAMS = ("id", "load")
 # Put into amqp_url unescaped: URL-unreserved characters only; usegalaxy.eu asks for >= 10.
 _PASSWORD = re.compile(r"[A-Za-z0-9._~-]{10,}")
 _AMQP_URL = re.compile(
     r"pyamqp://(?P<user>[^:@/]+):(?P<password>[^@]+)@(?P<host>[^@/:]+)(?::(?P<port>[^/]+))?"
     r"/(?P<vhost>[^?]*)(?:\?(?P<query>.*))?"
 )
+_JINJA = ("{{", "{%", "{#")
 
 
 def _password_ref(user):
@@ -47,6 +55,10 @@ def _password_ref(user):
 
 def _is_str(value):
     return isinstance(value, str)
+
+
+def _has_jinja(value):
+    return any(marker in value for marker in _JINJA)
 
 
 def preference_options(preferences):
@@ -69,7 +81,7 @@ def preference_options(preferences):
     ]
 
 
-def _mq_user_errors(users, endpoints, reserved):
+def _mq_user_errors(users, resolved, reserved):
     errors, names = [], set()
     if not isinstance(users, list):
         return ["group_vars/mq.yml: rabbitmq_users must be a list"], names
@@ -79,10 +91,10 @@ def _mq_user_errors(users, endpoints, reserved):
             errors.append(f"{where}: must be a mapping with 'user', 'password' and 'vhost'")
             continue
         name = user["user"]
-        where = f"group_vars/mq.yml rabbitmq_users '{name}'"
         if not _MQ_USER.fullmatch(name):
             errors.append(f"{where}: 'user' must match galaxy_<id> with <id> in [a-z0-9_]+")
             continue
+        where = f"group_vars/mq.yml rabbitmq_users '{name}'"
         if name in reserved:
             errors.append(f"{where}: already used by src_galaxy_pulsar_amqp_configs or RabbitMQ")
         if name in names:
@@ -93,7 +105,7 @@ def _mq_user_errors(users, endpoints, reserved):
         if user.get("vhost") != f"/pulsar/{name}":
             errors.append(f"{where}: 'vhost' must be /pulsar/{name}")
         password = user.get("password")
-        if endpoints is None:
+        if not resolved:
             if not (_is_str(password) and _password_ref(name).fullmatch(password.strip())):
                 errors.append(
                     f"{where}: 'password' must be '{{{{ rabbitmq_password_{name} }}}}' "
@@ -107,32 +119,35 @@ def _mq_user_errors(users, endpoints, reserved):
     return errors, names
 
 
-def _amqp_url_errors(where, url, user, endpoints):
+def _amqp_url_errors(where, url, user, resolved):
     match = _AMQP_URL.fullmatch(url) if _is_str(url) else None
     if not match:
         return [
-            f"{where}: params.amqp_url must look like pyamqp://<user>:<password>@<host>:<port>/<vhost>"
+            f"{where}: params.amqp_url must look like "
+            "pyamqp://<user>:<password>@<host>:<port>/<vhost>"
         ]
     errors = []
     if match["user"] != user:
         errors.append(f"{where}: params.amqp_url must use the RabbitMQ user {user}")
     if match["vhost"] != f"/pulsar/{user}":
         errors.append(f"{where}: params.amqp_url must use the vhost /pulsar/{user}")
-    if endpoints is None:
-        if not _password_ref(user).fullmatch(match["password"].strip()):
-            errors.append(
-                f"{where}: the password in params.amqp_url must be "
-                f"'{{{{ rabbitmq_password_{user} }}}}'"
-            )
-    elif f"{match['host']}:{match['port']}" not in endpoints:
+    if not resolved and not _password_ref(user).fullmatch(match["password"].strip()):
         errors.append(
-            f"{where}: params.amqp_url must point at this Galaxy's RabbitMQ "
-            f"({' or '.join(endpoints)})"
+            f"{where}: the password in params.amqp_url must be '{{{{ rabbitmq_password_{user} }}}}'"
         )
     return errors
 
 
-def _runner_errors(runners, users, endpoints, galaxy_url):
+def _params_errors(where, params):
+    return [
+        f"{where}: params key {key!r} is not allowed (lowercase letters, digits and '_', "
+        f"not {' or '.join(_RESERVED_PARAMS)})"
+        for key in params
+        if not (_is_str(key) and _PARAM_KEY.fullmatch(key)) or key in _RESERVED_PARAMS
+    ]
+
+
+def _runner_errors(runners, users, resolved):
     errors, ids = [], set()
     if not isinstance(runners, list):
         return ["templates/galaxy/config/job_conf.yml: galaxy_jobconf.plugins must be a list"], ids
@@ -142,11 +157,11 @@ def _runner_errors(runners, users, endpoints, galaxy_url):
             errors.append(f"{where}: must be a mapping with 'id', 'load' and 'params'")
             continue
         runner_id = runner["id"]
-        where = f"templates/galaxy/config/job_conf.yml plugin '{runner_id}'"
         match = _RUNNER_ID.fullmatch(runner_id)
         if not match:
             errors.append(f"{where}: 'id' must match pulsar_eu_<id> with <id> in [a-z0-9_]+")
             continue
+        where = f"templates/galaxy/config/job_conf.yml plugin '{runner_id}'"
         if runner_id in ids:
             errors.append(f"{where}: duplicate id")
         ids.add(runner_id)
@@ -158,19 +173,15 @@ def _runner_errors(runners, users, endpoints, galaxy_url):
         if not isinstance(params, dict):
             errors.append(f"{where}: 'params' must be a mapping")
             continue
+        errors.extend(_params_errors(where, params))
         user = f"galaxy_{match[1]}"
         if user not in users:
             errors.append(f"{where}: no RabbitMQ user {user} in group_vars/mq.yml")
-        errors.extend(_amqp_url_errors(where, params.get("amqp_url"), user, endpoints))
-        url = params.get("galaxy_url")
-        if not _is_str(url) or (
-            galaxy_url is not None and url.rstrip("/") != galaxy_url.rstrip("/")
-        ):
-            errors.append(f"{where}: params.galaxy_url must be this Galaxy's URL")
+        errors.extend(_amqp_url_errors(where, params.get("amqp_url"), user, resolved))
     return errors, ids
 
 
-def _option_errors(options):
+def _option_errors(options, resolved):
     errors, tags = [], set()
     where = "files/galaxy/config/user_preferences_extra_conf.yml"
     if not isinstance(options, list):
@@ -186,6 +197,8 @@ def _option_errors(options):
                 f'{where}: option {number} must be ["<label>", <tag>] with <tag> in [A-Za-z0-9_.-]+'
             )
             continue
+        if not resolved and _has_jinja(option[0]):
+            errors.append(f"{where}: option {number}: the label must not contain Jinja ({{{{ {{%)")
         if option[1] in tags:
             errors.append(f"{where}: duplicate option {option[1]}")
         tags.add(option[1])
@@ -198,6 +211,8 @@ def _destination_errors(destinations, runner_ids, tags):
         return [f"{where}: destinations must be a mapping"]
     errors, required = [], set()
     for name, destination in destinations.items():
+        if not (_is_str(name) and _DESTINATION.fullmatch(name)):
+            errors.append(f"{where}: destination name {name!r} must match [A-Za-z0-9_]+")
         destination = destination if isinstance(destination, dict) else {}
         runner = destination.get("runner")
         if _is_str(runner) and runner.startswith("pulsar_eu_") and runner not in runner_ids:
@@ -217,28 +232,43 @@ def _destination_errors(destinations, runner_ids, tags):
 
 
 def byoc_onboarding_errors(
-    mq_users,
-    runners,
-    options,
-    destinations=None,
-    endpoints=None,
-    galaxy_url=None,
-    reserved=(),
+    mq_users, runners, options, destinations=None, resolved=False, reserved=()
 ):
     """Return one message per problem in the onboarding files (see the module docstring).
 
     ``mq_users``: ``rabbitmq_users``; ``runners``: ``galaxy_jobconf.plugins``; ``options``:
     :func:`preference_options`; ``destinations``: TPV ``destinations`` (skipped if None);
-    ``endpoints``: allowed ``host:port`` of ``amqp_url`` (None for raw mode); ``galaxy_url``:
-    required ``galaxy_url`` (None: any string); ``reserved``: RabbitMQ user names in use.
+    ``resolved``: values resolved by Ansible (deploy) rather than the committed files (CI);
+    ``reserved``: RabbitMQ user names in use.
     """
-    errors, users = _mq_user_errors(mq_users, endpoints, set(reserved))
-    runner_errors, runner_ids = _runner_errors(runners, users, endpoints, galaxy_url)
-    option_errors, tags = _option_errors(options)
+    errors, users = _mq_user_errors(mq_users, resolved, set(reserved))
+    runner_errors, runner_ids = _runner_errors(runners, users, resolved)
+    option_errors, tags = _option_errors(options, resolved)
     errors += runner_errors + option_errors
     if destinations is not None:
         errors += _destination_errors(destinations, runner_ids, tags)
     return errors
+
+
+def byoc_runners(runners, amqp_endpoint, galaxy_url, endpoints=()):
+    """Point validated runners at this Galaxy (see the module docstring).
+
+    ``amqp_endpoint``: ``host:port`` of this host's AMQPS listener; an ``amqp_url`` whose
+    ``host:port`` is not one of ``endpoints`` is rebuilt as
+    ``pyamqp://<user>:<password>@<amqp_endpoint>/<vhost>?ssl=1``.
+    """
+    result = []
+    for runner in runners or []:
+        params = dict(runner["params"])
+        match = _AMQP_URL.fullmatch(params["amqp_url"])
+        if f"{match['host']}:{match['port']}" not in endpoints:
+            params["amqp_url"] = (
+                f"pyamqp://{match['user']}:{match['password']}@{amqp_endpoint}/"
+                f"{match['vhost']}?ssl=1"
+            )
+        params["galaxy_url"] = galaxy_url
+        result.append({**runner, "params": params})
+    return result
 
 
 def byoc_secret_errors(secrets, mq_users):
@@ -270,5 +300,6 @@ class FilterModule:
         return {
             "byoc_preference_options": preference_options,
             "byoc_onboarding_errors": byoc_onboarding_errors,
+            "byoc_runners": byoc_runners,
             "byoc_secret_errors": byoc_secret_errors,
         }

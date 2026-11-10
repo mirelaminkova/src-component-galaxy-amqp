@@ -168,19 +168,23 @@ destinations:
         - {{ (pulsar.name ~ '-pulsar') | to_json }}
 {% endfor %}
 
-  ###################################################################
-  # BYOC ONBOARDING DESTINATIONS                                    #
-  # Onboarding PRs add their `pulsar_<id>_tpv` destinations below   #
-  # this line, in the usegalaxy.eu format:                          #
-  #                                                                 #
-  #   pulsar_<id>_tpv:                                              #
-  #     inherits: pulsar_default                                    #
-  #     runner: pulsar_eu_<id>                                      #
-  #     max_accepted_cores: <cores>                                 #
-  #     max_accepted_mem: <GB>                                      #
-  #     min_accepted_gpus: 0                                        #
-  #     max_accepted_gpus: 0                                        #
-  #     scheduling:                                                 #
-  #       require:                                                  #
-  #         - <id>-pulsar                                           #
-  ###################################################################
+  # BYOC onboarding destinations: onboarding PRs add their `pulsar_<id>_tpv` destinations
+  # here, at the end of the PULSAR DESTINATIONS section and above the LOCAL CONDOR DESTINATIONS
+  # banner (the place usegalaxy.eu's onboarding PRs use), in the usegalaxy.eu format:
+  #
+  #   pulsar_<id>_tpv:
+  #     inherits: pulsar_default
+  #     runner: pulsar_eu_<id>
+  #     max_accepted_cores: <cores>
+  #     max_accepted_mem: <GB>
+  #     min_accepted_gpus: 0
+  #     max_accepted_gpus: 0
+  #     scheduling:
+  #       require:
+  #         - <id>-pulsar
+
+  #############################
+  # LOCAL CONDOR DESTINATIONS #
+  #############################
+  # There is no HTCondor here. The banner marks the end of the onboarding section, as on
+  # usegalaxy.eu; keep it last.

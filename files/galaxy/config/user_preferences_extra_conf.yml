@@ -5,6 +5,8 @@
 # templates/galaxy/config/user_preferences_extra_conf.yml.j2 (after the Pulsars configured
 # through the component parameters); the other keys are not used. <tag> is the tag a TPV
 # destination in files/galaxy/tpv/destinations.yml.j2 requires.
+# New options go at the end of the list, above the anchor comment (where usegalaxy.eu has
+# `ega_account:`), indented like the default option (18 spaces, as in usegalaxy.eu's file).
 # See README.md, "Onboarding a BYOC Pulsar via PR".
 preferences:
     distributed_compute:
@@ -16,3 +18,5 @@ preferences:
               required: false
               options:
                   - ["default - Galaxy will decide where to put your job", None]
+
+    # --- end of remote_resources options: onboarding PRs add options above this line ---

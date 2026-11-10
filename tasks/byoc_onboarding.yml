@@ -49,12 +49,22 @@
       ansible.builtin.set_fact:
         _galaxy_byoc_secret_files: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/secret_group_vars/*.yml') | sort }}"
 
-    - name: Require src_galaxy_vault_password for secret_group_vars
+    # CD runs (issue #22) do not pass src_galaxy_vault_password; they use the file it was written
+    # to by the SRC deployment.
+    - name: Check for the Vault password file
+      ansible.builtin.stat:
+        path: "{{ _galaxy_vault_secret_path }}"
+      register: _galaxy_vault_secret_stat
+      when: _galaxy_byoc_secret_files | length > 0
+
+    - name: Require the Vault password for secret_group_vars
       ansible.builtin.assert:
-        that: _galaxy_vault_password | length > 0 or _galaxy_byoc_secret_files | length == 0
+        that: >-
+          _galaxy_byoc_secret_files | length == 0 or _galaxy_vault_password | length > 0
+          or _galaxy_vault_secret_stat.stat.exists
         fail_msg: >-
           secret_group_vars/ holds Ansible Vault files ({{ _galaxy_byoc_secret_files | map('basename') | join(', ') }}),
-          but the component parameter src_galaxy_vault_password is empty.
+          but the component parameter src_galaxy_vault_password is empty and {{ _galaxy_vault_secret_path }} does not exist.
         quiet: true
 
     # Decrypted in memory: the plaintext is only in the registered stdout (no_log), never on disk.
@@ -73,7 +83,19 @@
         label: "{{ item | basename }}"
       register: _galaxy_byoc_decrypted
       changed_when: false
+      failed_when: false
       no_log: true
+
+    # Only file names and return codes: no_log above hides everything else.
+    - name: Check that every secret_group_vars file was decrypted
+      ansible.builtin.assert:
+        that: _galaxy_byoc_decrypted.results | rejectattr('rc', 'equalto', 0) | list | length == 0
+        fail_msg: >-
+          Could not decrypt {{ _galaxy_byoc_decrypted.results | rejectattr('rc', 'equalto', 0)
+          | map(attribute='item') | map('basename') | join(', ') }} in secret_group_vars/ with the Vault password
+          (src_galaxy_vault_password, written to {{ _galaxy_vault_secret_path }}): the password is wrong
+          or the file is not an Ansible Vault file.
+        quiet: true
 
     - name: Collect the BYOC secrets
       ansible.builtin.set_fact:

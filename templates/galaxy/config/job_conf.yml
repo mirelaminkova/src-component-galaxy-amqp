@@ -18,6 +18,15 @@
 #
 # amqp_url must point at this Galaxy's RabbitMQ: the workspace name with src_galaxy_rabbitmq_port
 # (as above, or the literal name and port), or 127.0.0.1:5672 without ?ssl=1.
+# The runner's amqp_url and galaxy_url may also be copied verbatim from usegalaxy.eu
+# (mq.galaxyproject.eu, https://usegalaxy.eu): the playbook then builds amqp_url from its user,
+# password and vhost with this workspace's name and src_galaxy_rabbitmq_port (?ssl=1), and always
+# sets galaxy_url to this Galaxy.
 # See README.md, "Onboarding a BYOC Pulsar via PR".
+#
+# plugins is empty (null) until the first onboarding; new entries go at the end of the list,
+# above default_destination (as on usegalaxy.eu).
 galaxy_jobconf:
-  plugins: []
+  plugins:
+
+  default_destination: tpv_dispatcher  # not read by the playbook (job_conf.yml.j2 sets TPV)

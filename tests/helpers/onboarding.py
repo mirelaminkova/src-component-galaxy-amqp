@@ -1,15 +1,20 @@
-"""Load the EU-layout BYOC onboarding files like tasks/byoc_onboarding.yml does (issue #21).
+"""Apply and load EU-layout BYOC onboarding files like the playbook does (issue #21).
 
-The contract tests copy a set of onboarding files, apply onboarding diffs to them (as an
-onboarding pull request would), and load the result with these helpers.
+The contract tests copy the repository's onboarding files, insert the lines an onboarding
+pull request adds (taken verbatim from usegalaxy-eu/infrastructure-playbook #872 and #1384)
+at the place usegalaxy.eu's PRs put them, and load the result like
+tasks/byoc_onboarding.yml does.
 """
 
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import yaml
 from ansible.parsing.dataloader import DataLoader
+from ansible.parsing.vault import VaultLib, VaultSecret
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -19,33 +24,74 @@ FILES = {
     "_galaxy_onboarding_jobconf": "templates/galaxy/config/job_conf.yml",
     "_galaxy_onboarding_preferences": "files/galaxy/config/user_preferences_extra_conf.yml",
 }
+TPV_DESTINATIONS = "files/galaxy/tpv/destinations.yml.j2"
 SECRETS_DIR = "secret_group_vars"
+SECRETS_FILE = f"{SECRETS_DIR}/pulsar.yml"
 VAULT_HEADER = b"$ANSIBLE_VAULT;"
 
+# Onboarding PRs insert their lines after the last entry above these lines (usegalaxy.eu:
+# `ega_account:`, `# LOCAL CONDOR DESTINATIONS #` banner, `rabbitmq_plugins:`,
+# `default_destination:`).
+ANCHORS = {
+    FILES["_galaxy_onboarding_preferences"]: r"    # --- end of remote_resources options",
+    TPV_DESTINATIONS: r"  #+\n  # LOCAL CONDOR DESTINATIONS #",
+    FILES["_galaxy_onboarding_mq"]: r"# --- end of rabbitmq_users",
+    FILES["_galaxy_onboarding_jobconf"]: r"  default_destination:",
+}
+# Snippet file name (in a fixture directory) -> repository file.
+SNIPPETS = {Path(path).name: path for path in ANCHORS}
 
-TPV_DIR = "files/galaxy/tpv"
-TPV_DESTINATIONS = f"{TPV_DIR}/destinations.yml.j2"
 
-
-def apply_diffs(source: Path, diffs: list[Path], dest: Path, onboarded_destinations: Path) -> Path:
-    """Copy ``source`` to ``dest`` and apply each unified diff with ``git apply``.
-
-    The repository's TPV files are copied too, with ``onboarded_destinations`` (the
-    destinations ``source`` has already onboarded) appended to destinations.yml.j2, so the
-    diffs' TPV hunks apply at the end of the onboarding section whatever the repository holds.
-    """
-    shutil.copytree(source, dest)
-    shutil.copytree(REPO_ROOT / TPV_DIR, dest / TPV_DIR)
-    with (dest / TPV_DESTINATIONS).open("a") as destinations:
-        destinations.write(onboarded_destinations.read_text())
-    for diff in diffs:
-        subprocess.run(  # noqa: S603 - fixed command, paths from the test suite
-            ["git", "apply", "--whitespace=error-all", str(diff)],  # noqa: S607
-            cwd=dest,
-            check=True,
-            capture_output=True,
-        )
+def copy_repository_files(dest: Path) -> Path:
+    """Copy the repository's onboarding files (and the rest of files/galaxy/tpv/) to ``dest``."""
+    for path in [*FILES.values(), SECRETS_DIR]:
+        source = REPO_ROOT / path
+        target = dest / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            shutil.copy(source, target)
+    shutil.copytree(REPO_ROOT / "files/galaxy/tpv", dest / "files/galaxy/tpv")
     return dest
+
+
+def insert_before_anchor(text: str, anchor: str, lines: str) -> str:
+    """Insert ``lines`` right after the last non-blank line before ``anchor``."""
+    match = re.search(f"^{anchor}", text, flags=re.MULTILINE)
+    if match is None:
+        raise ValueError(f"anchor {anchor!r} not found")
+    head = text[: match.start()]
+    body = head.rstrip("\n")
+    return body + "\n" + lines + head[len(body) + 1 :] + text[match.start() :]
+
+
+def onboard(root: Path, snippets: Path, secrets: dict, password_file: Path) -> None:
+    """Add one endpoint to the files under ``root``, as an onboarding PR does.
+
+    ``snippets`` holds the lines the PR adds, one file per target file; ``secrets`` are the
+    variables it adds to the Vault file (created if missing, as by the first onboarding).
+    """
+    for snippet in sorted(snippets.iterdir()):
+        path = SNIPPETS[snippet.name]
+        target = root / path
+        target.write_text(
+            insert_before_anchor(target.read_text(), ANCHORS[path], snippet.read_text())
+        )
+    add_secrets(root / SECRETS_FILE, secrets, password_file)
+
+
+def _vault(password_file: Path) -> VaultLib:
+    secret = VaultSecret(password_file.read_bytes().strip())
+    return VaultLib([("default", secret)])
+
+
+def add_secrets(path: Path, secrets: dict, password_file: Path) -> None:
+    """Add ``secrets`` to the Vault file ``path`` (like ``ansible-vault create``/``edit``)."""
+    vault = _vault(password_file)
+    current = yaml.safe_load(vault.decrypt(path.read_bytes())) if path.exists() else {}
+    content = yaml.safe_dump({**current, **secrets}, default_flow_style=False)
+    path.write_bytes(vault.encrypt(content))
 
 
 def load_files(root: Path) -> dict:
@@ -92,3 +138,31 @@ def plaintext_secret_files(root: Path) -> list[str]:
         for path in paths
         if path.name != ".gitkeep" and not path.read_bytes().startswith(VAULT_HEADER)
     ]
+
+
+class _DuplicateKeyLoader(yaml.SafeLoader):
+    """A SafeLoader that records mapping keys defined twice (PyYAML keeps the last one)."""
+
+    duplicates: list
+
+
+def _construct_mapping(loader, node, deep=False):
+    keys = [loader.construct_object(key, deep=deep) for key, _ in node.value]
+    loader.duplicates.extend(key for i, key in enumerate(keys) if key in keys[:i])
+    return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+
+_DuplicateKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_mapping
+)
+
+
+def duplicate_keys(text: str) -> list:
+    """Mapping keys that appear twice in the same mapping of the YAML ``text``."""
+    loader = _DuplicateKeyLoader(text)
+    loader.duplicates = []
+    try:
+        loader.get_single_data()
+    finally:
+        loader.dispose()
+    return loader.duplicates

@@ -3,19 +3,12 @@
 Used by `tests/unit/test_byoc_onboarding.py`. Kept byte-for-byte (excluded from the
 whitespace fixers, yamllint and ansible-lint).
 
-* `base/`: the onboarding files in this repository's layout, with one endpoint (`sk01`)
-  already onboarded. `base/secret_group_vars/pulsar.yml` is encrypted with
-  `vault-password.txt`.
-* `base-destinations.yml`: the TPV destination of `sk01`. The tests copy the repository's
-  `files/galaxy/tpv/` and append it to `destinations.yml.j2`, so the diffs' TPV hunks apply
-  at the end of the onboarding section, whatever endpoints the repository already has.
-* `onboard-egi01.diff`: modelled on usegalaxy-eu/infrastructure-playbook#872 (literal
-  workspace name in `amqp_url` and `galaxy_url`).
-* `onboard-eosc01.diff`: modelled on usegalaxy-eu/infrastructure-playbook#1384
-  (`{{ _galaxy_server_fqdn }}` / `{{ _galaxy_rabbitmq_port }}` in `amqp_url`).
-* `vault-password.txt`: a **throwaway** Vault password, used only for these fixtures.
-  The passwords inside the fixture Vault files are throwaway test values too.
-
-The diffs apply in this order with `git apply`. To change them, edit a copy of `base/`
-(decrypt/re-encrypt the Vault file with `ansible-vault` and `vault-password.txt`) and
-regenerate them with `git diff --no-index`.
+* `eu-872-egi01/`, `eu-1384-eosc01/`: the lines usegalaxy-eu/infrastructure-playbook#872 and
+  #1384 add to each file, copied verbatim from the PR diffs (`gh pr diff`), one file per
+  target file (named after it). The tests insert them into copies of this repository's
+  files above the anchors listed in `tests/helpers/onboarding.py` (`ANCHORS`), the place
+  usegalaxy.eu's PRs insert them. One change: #872's option line is indented 18 spaces
+  instead of 10, like usegalaxy.eu's current file and #1384 (a test shows that 10 spaces
+  break the YAML).
+* `vault-password.txt`: a **throwaway** Vault password, used only for these fixtures. The
+  tests create `secret_group_vars/pulsar.yml` with it, holding throwaway passwords.

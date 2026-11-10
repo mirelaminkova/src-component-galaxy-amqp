@@ -25,8 +25,9 @@ runners:
   # BYOC Pulsar runner from templates/galaxy/config/job_conf.yml (EU layout, issue #21).
   {{ runner.id }}:
     load: {{ runner.load | to_json }}
+{# Keys are checked (filter_plugins/byoc_onboarding.py) and quoted, so they cannot add YAML. #}
 {% for key, value in runner.params.items() %}
-    {{ key }}: {{ value | to_json }}
+    {{ key | to_json }}: {{ value | to_json }}
 {% endfor %}
 {% endfor %}
 

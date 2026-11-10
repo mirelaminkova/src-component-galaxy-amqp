@@ -463,7 +463,12 @@ def test_onboarding_destination_gets_no_other_jobs(route_factory):
 
 def test_onboarding_section_is_marked_and_last(tmp_path):
     destinations = Path(_render(tmp_path, WITH_PULSARS)[1]).read_text()
-    marker = destinations.index("# BYOC ONBOARDING DESTINATIONS")
+    marker = destinations.index("# BYOC onboarding destinations")
+    anchor = destinations.index("# LOCAL CONDOR DESTINATIONS #")
 
     assert "pulsar_default:" in destinations[:marker]
-    assert all(line.lstrip().startswith("#") for line in destinations[marker:].splitlines())
+    assert marker < anchor
+    assert all(
+        not line.strip() or line.lstrip().startswith("#")
+        for line in destinations[marker:].splitlines()
+    )

@@ -12,4 +12,10 @@
 #     vhost: /pulsar/galaxy_<id>
 #
 # See README.md, "Onboarding a BYOC Pulsar via PR".
-rabbitmq_users: []
+#
+# The list is empty (null) until the first onboarding: an entry appended below the key makes it
+# a list. New entries go at the end of the list, above the anchor comment (where usegalaxy.eu has
+# `rabbitmq_plugins:`).
+rabbitmq_users:
+
+# --- end of rabbitmq_users: onboarding PRs add entries above this line ---
