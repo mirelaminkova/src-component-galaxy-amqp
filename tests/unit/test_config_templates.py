@@ -18,7 +18,12 @@ BASE_VARS = {
     "_galaxy_has_pulsar": False,
     "_galaxy_pulsar_configs_raw": [],
     "_galaxy_pulsar_tool_mappings": [],
+    "_galaxy_use_dispatcher": False,
+    "_galaxy_remote_destinations": [],
+    "_galaxy_byoc_pulsar": False,
 }
+
+REMOTE_DESTINATIONS = [{"id": "remote_byoc_basic", "label": "BYOC 'cluster': \"GPU\""}]
 
 PULSAR_MINIMAL = {"url": "https://pulsar.example.org/", "private_token": "t0ken"}
 PULSAR_FULL = {
@@ -39,10 +44,15 @@ CASES = {
     "user_preferences_extra_conf.yml.j2": {
         "ibridges": {},
         "no_ibridges": {"_galaxy_ibridges_enabled": False},
+        "remotes_and_byoc": {
+            "_galaxy_remote_destinations": REMOTE_DESTINATIONS,
+            "_galaxy_byoc_pulsar": True,
+        },
+        "only_byoc": {"_galaxy_ibridges_enabled": False, "_galaxy_byoc_pulsar": True},
     },
     "job_conf.yml.j2": {
         "default": {},
-        "interactive": {"_galaxy_use_interactive_tools": True},
+        "interactive": {"_galaxy_use_interactive_tools": True, "_galaxy_use_dispatcher": True},
         "pulsar_minimal": {
             "_galaxy_has_pulsar": True,
             "_galaxy_pulsar_configs_raw": [PULSAR_MINIMAL],
@@ -89,8 +99,9 @@ def test_job_conf_default_environment_without_interactive_tools():
     assert "pulsar" not in conf["runners"]
 
 
-def test_job_conf_routes_through_dispatcher_with_interactive_tools():
-    conf = _job_conf(_galaxy_use_interactive_tools=True)
+@pytest.mark.parametrize("interactive", [True, False])
+def test_job_conf_routes_through_dispatcher_when_enabled(interactive):
+    conf = _job_conf(_galaxy_use_interactive_tools=interactive, _galaxy_use_dispatcher=True)
 
     assert conf["execution"]["default"] == "default_dispatcher"
     assert conf["execution"]["environments"]["default_dispatcher"] == {

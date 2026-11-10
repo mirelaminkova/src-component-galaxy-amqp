@@ -33,3 +33,62 @@
       ansible.builtin.assert:
         that:
           - "'Access to Galaxy is denied' in galaxy_service_live.stdout" # this sentence is displayed by Galaxy if the GX_SECRET header is not passed along
+
+    # --- Issue #5: Pulsar user preferences and preference-based job routing ---
+    - name: Read the extra user preferences and job config
+      ansible.builtin.slurp:
+        src: "/srv/galaxy/config/{{ item }}"
+      loop:
+        - user_preferences_extra_conf.yml
+        - job_conf.yml
+      register: issue5_config_files
+
+    - name: Check the default_dispatcher job rule is installed
+      ansible.builtin.stat:
+        path: /srv/galaxy/server/lib/galaxy/jobs/rules/default_dispatcher.py
+      register: issue5_rule
+
+    - name: Assert preferences and job routing are configured
+      vars:
+        issue5_prefs: "{{ (issue5_config_files.results[0].content | b64decode | from_yaml).preferences }}"
+        issue5_job_conf: "{{ issue5_config_files.results[1].content | b64decode | from_yaml }}"
+      ansible.builtin.assert:
+        that:
+          - "'irods_config' in issue5_prefs"
+          - "'byoc_pulsar' in issue5_prefs"
+          - "['Molecule Pulsar', 'remote_molecule_basic'] in issue5_prefs.distributed_compute.inputs[0].options"
+          - issue5_job_conf.execution.default == 'default_dispatcher'
+          - "'remote_molecule_basic' in issue5_job_conf.execution.environments"
+          - issue5_rule.stat.exists
+
+    - name: Get the current Galaxy user
+      ansible.builtin.uri:
+        url: http://localhost:8080/api/users/current
+        headers: &issue5_headers
+          REMOTE_USER: testuser
+          GX_SECRET: "{{ gx_secret.stdout }}"
+      register: issue5_user
+
+    - name: Save a distributed_compute preference through the Galaxy API
+      ansible.builtin.uri:
+        url: "http://localhost:8080/api/users/{{ issue5_user.json.id }}/information/inputs"
+        method: PUT
+        body_format: json
+        body:
+          "distributed_compute|remote_resources": remote_molecule_basic
+        headers: *issue5_headers
+
+    - name: Read the user's preference forms back from the Galaxy API
+      ansible.builtin.uri:
+        url: "http://localhost:8080/api/users/{{ issue5_user.json.id }}/information/inputs"
+        headers: *issue5_headers
+      register: issue5_info
+
+    - name: Assert Galaxy serves the forms and stored the choice
+      vars:
+        issue5_sections: "{{ issue5_info.json.inputs | selectattr('type', 'equalto', 'section') | list }}"
+        issue5_compute: "{{ issue5_sections | selectattr('name', 'equalto', 'distributed_compute') | first }}"
+      ansible.builtin.assert:
+        that:
+          - "'byoc_pulsar' in (issue5_sections | map(attribute='name'))"
+          - issue5_compute.inputs[0].value == 'remote_molecule_basic'

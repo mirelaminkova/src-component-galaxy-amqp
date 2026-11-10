@@ -10,3 +10,7 @@
     src_galaxy_workflow_files: "{{ playbook_dir ~ '/molecule/_testfiles/sample-workflow.ga' }}"
     src_ibridges: 'true'
     workspace_fqdn: localhost
+    # Issue #5: a (never contacted) Pulsar destination and the BYOC form, so verify.yml
+    # can check the distributed_compute/byoc_pulsar preferences and the job rule.
+    src_galaxy_pulsar_configs: "[{name: molecule, label: Molecule Pulsar, url: https://pulsar.invalid, private_token: not-a-secret}]"
+    src_galaxy_byoc_pulsar: 'true'

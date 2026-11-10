@@ -8,7 +8,7 @@ runners:
 {% endif %}
 
 execution:
-  default: {{ _galaxy_default_dispatcher if _galaxy_use_interactive_tools else _galaxy_jobs_default }}
+  default: {{ _galaxy_default_dispatcher if _galaxy_use_dispatcher else _galaxy_jobs_default }}
   environments:
     local:
       runner: local
@@ -24,7 +24,7 @@ execution:
       docker_sudo: false
       container_resolvers: # use defaults
       outputs_to_working_directory: {{ _galaxy_use_interactive_tools | bool }}
-{% if _galaxy_use_interactive_tools %}
+{% if _galaxy_use_dispatcher %}
     {{ _galaxy_default_dispatcher }}:
       runner: dynamic
       type: python
