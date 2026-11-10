@@ -184,3 +184,17 @@ def test_labels_with_quotes_render_to_valid_python():
     dispatch = _dispatcher(remotes=[{"id": "remote_x_basic", "label": 'It\'s "quoted"'}])
 
     assert dispatch(_tool(), _user("remote_x_basic")) == "remote_x_basic"
+
+
+@pytest.mark.parametrize(
+    "choice",
+    [[], ["remote_hpc_basic"], {}, {"remote_hpc_basic": 1}, None, 0, 1, 1.5, True],
+    ids=["empty_list", "list", "empty_dict", "dict", "none", "zero", "int", "float", "bool"],
+)
+def test_non_string_choices_fall_back_to_the_default(choice):
+    """The preferences API stores any JSON value; the rule must not crash on it."""
+    user = SimpleNamespace(
+        extra_preferences=defaultdict(lambda: None, {PREF_KEY: choice}),
+    )
+
+    assert _dispatcher("local")(_tool(), user) == "local"

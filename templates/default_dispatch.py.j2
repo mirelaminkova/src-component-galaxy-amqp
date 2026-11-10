@@ -55,6 +55,7 @@ def {{ _galaxy_default_dispatcher }}(tool, user):
     if tool.tool_type == "interactive":
         return INTERACTIVE_DESTINATION
     choice = _preferred_destination(user)
-    if choice in REMOTE_DESTINATIONS and _may_run_remotely(tool):
+    # The preferences API stores any JSON value; only a string can name a destination.
+    if isinstance(choice, str) and choice in REMOTE_DESTINATIONS and _may_run_remotely(tool):
         return choice
     return DEFAULT_DESTINATION
