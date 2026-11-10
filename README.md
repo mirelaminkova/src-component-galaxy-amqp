@@ -71,6 +71,7 @@ What a ResearchCloud (SRC) component and catalog item for this playbook need, so
 * **Playbook**: `galaxysrv.yml`.
 * **External plugin** `remote_ansible_version`: `14.6.0`. This Ansible release ships ansible-core 2.21.6, the oldest ansible-core the playbook supports (CI runs the tests with it in the job `pytest (SRC Ansible 14.6.0: ansible-core 2.21, Python 3.12)`). Older releases such as `9.1.0` (ansible-core 2.16) are not supported.
 * **Base OS**: Ubuntu 24.04. ansible-core 2.21 needs Python ≥ 3.12 on the workspace, and Ubuntu 24.04's `python3` is 3.12 (Ubuntu 22.04 has 3.10). The RabbitMQ setup is also tested end to end on 24.04 only (see [RabbitMQ](#rabbitmq-for-remote-pulsar-servers)).
+* **Python on the workspace**: the playbook runs its modules with the system Python (`ansible_python_interpreter: /usr/bin/python3`), not the external plugin's Ansible venv, which `become_user` tasks cannot execute; module dependencies are installed with apt.
 * The workspace also needs the SURF Nginx component (see [Prerequisites](#prerequisites)), which provides `workspace_fqdn` and the TLS certificate.
 
 ### Access rules
