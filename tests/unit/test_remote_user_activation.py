@@ -64,16 +64,13 @@ def test_play_includes_the_activation_tasks_after_galaxy_starts():
         for task in play["tasks"]
         if task.get("ansible.builtin.include_tasks") == "tasks/remote_user_activation.yml"
     ]
-    start = next(
-        task
-        for task in play["tasks"]
-        if "galaxy.target" in task.get("with_items", [])
-        and task["ansible.builtin.systemd_service"]["state"] == "started"
-    )
+    start = "Ensure services enabled and started"
+    (start_task,) = [task for task in play["tasks"] if task["name"] == start]
 
     assert len(includes) == 1
     assert "when" not in includes[0]
-    assert names.index(includes[0]["name"]) > names.index(start["name"])
+    assert "galaxy.target" in start_task["with_items"]
+    assert names.index(includes[0]["name"]) > names.index(start)
 
 
 def test_tasks_run_as_the_postgres_superuser_on_galaxys_database():
@@ -121,7 +118,9 @@ def test_tasks_wait_for_the_schema_first():
 def test_trigger_is_installed_only_when_missing_or_changed(installed, expected):
     marker = _render("{{ _galaxy_activation_marker }}")
     rows = [{"marker": marker} if row == "current" else row for row in installed]
-    condition = _tasks()["Install the remote-user activation trigger"]["when"]
+    condition = _tasks()[
+        "Install the remote-user activation trigger and activate existing accounts"
+    ]["when"]
 
     result = _render(
         f"{{{{ {condition} }}}}",
@@ -129,16 +128,6 @@ def test_trigger_is_installed_only_when_missing_or_changed(installed, expected):
     )
 
     assert result is expected
-
-
-def test_existing_accounts_are_activated_only_with_a_new_trigger():
-    """Run once per (re)installed trigger, so an account deactivated later stays inactive."""
-    tasks = _tasks()
-
-    assert (
-        tasks["Activate existing remote-user accounts"]["when"]
-        == tasks["Install the remote-user activation trigger"]["when"]
-    )
 
 
 # --- the SQL against a real PostgreSQL ---------------------------------------------------------
@@ -171,8 +160,9 @@ def _postgres_unavailable():
     return None
 
 
+_POSTGRES_UNAVAILABLE = _postgres_unavailable()
 requires_postgres = pytest.mark.skipif(
-    _postgres_unavailable() is not None, reason=str(_postgres_unavailable())
+    _POSTGRES_UNAVAILABLE is not None, reason=str(_POSTGRES_UNAVAILABLE)
 )
 
 
@@ -252,14 +242,14 @@ def test_sql_activates_remote_users_only(db):
     assert _insert_like_galaxy(psql, "gone@sram", external=True, deleted=True) == "f"
     assert psql(read) == ""
 
-    psql(_query("Install the remote-user activation trigger"))
-    psql(_query("Install the remote-user activation trigger"))  # re-running is safe
+    psql(_query("Install the remote-user activation trigger and activate existing accounts"))
+    psql(
+        _query("Install the remote-user activation trigger and activate existing accounts")
+    )  # re-running is safe
 
     assert psql(read) == marker
     assert _insert_like_galaxy(psql, "new@sram", external=True) == "t"
     assert _insert_like_galaxy(psql, "local@example.org", external=False) == "f"
-
-    psql(_query("Activate existing remote-user accounts"))
 
     rows = psql("SELECT email, active FROM public.galaxy_user ORDER BY id").splitlines()
     assert rows == ["before@sram|t", "gone@sram|f", "new@sram|t", "local@example.org|f"]
@@ -279,10 +269,10 @@ def test_schema_wait_is_false_until_galaxy_user_exists(db):
 def test_disabled_trigger_counts_as_missing(db):
     psql = db
     read = _query("Read the installed remote-user activation trigger")
-    psql(_query("Install the remote-user activation trigger"))
+    psql(_query("Install the remote-user activation trigger and activate existing accounts"))
     psql("ALTER TABLE public.galaxy_user DISABLE TRIGGER src_activate_remote_user")
 
     assert psql(read) == ""
 
-    psql(_query("Install the remote-user activation trigger"))
+    psql(_query("Install the remote-user activation trigger and activate existing accounts"))
     assert psql(read) == _render("{{ _galaxy_activation_marker }}")

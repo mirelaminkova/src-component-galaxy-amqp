@@ -7,12 +7,13 @@
 # byoc-sync skips inactive accounts, so their BYOC Pulsar forms were never onboarded.
 # These workspaces have no activation step (SRAM admits the users), so a trigger activates
 # remote-user accounts as Galaxy inserts them. Existing ones are activated when the trigger is
-# (re)installed, not on every run, so an account an admin deactivates later stays inactive.
+# (re)installed, not on every run, so an account an admin deactivates later stays inactive
+# until the trigger SQL below changes (a new definition activates existing accounts again).
 #
 # Included after galaxy.target is started: on a new database Galaxy creates its schema
 # (galaxy_user) on its first start, not in the galaxyproject.galaxy role.
-# The trigger reads galaxy_user.external and sets galaxy_user.active; a Galaxy migration that
-# drops or renames either column has to drop src_activate_remote_user first.
+# The trigger reads galaxy_user.external and sets galaxy_user.active: if a Galaxy upgrade
+# fails on galaxy_user, check src_activate_remote_user.
 - name: Activate remote-user accounts
   become: true
   become_user: postgres
@@ -54,21 +55,13 @@
       register: _galaxy_activation_installed
       changed_when: false
 
-    - name: Install the remote-user activation trigger
+    # One transaction: the marker is only recorded once existing accounts are activated too.
+    - name: Install the remote-user activation trigger and activate existing accounts
       when: >-
         _galaxy_activation_installed.query_result | map(attribute='marker') | list
         != [_galaxy_activation_marker]
       community.postgresql.postgresql_query:
         login_db: "{{ _galaxy_activation_db }}"
         query: |-
-          {{ _galaxy_activation_sql }}COMMENT ON TRIGGER src_activate_remote_user ON public.galaxy_user IS '{{ _galaxy_activation_marker }}';
-
-    - name: Activate existing remote-user accounts
-      when: >-
-        _galaxy_activation_installed.query_result | map(attribute='marker') | list
-        != [_galaxy_activation_marker]
-      community.postgresql.postgresql_query:
-        login_db: "{{ _galaxy_activation_db }}"
-        query: >-
-          UPDATE public.galaxy_user SET active = true
-          WHERE external AND NOT deleted AND NOT active
+          {{ _galaxy_activation_sql }}UPDATE public.galaxy_user SET active = true WHERE external AND NOT deleted AND NOT active;
+          COMMENT ON TRIGGER src_activate_remote_user ON public.galaxy_user IS '{{ _galaxy_activation_marker }}';
