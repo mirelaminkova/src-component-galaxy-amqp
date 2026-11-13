@@ -179,3 +179,22 @@
           - files['/etc/ssl/acme/localhost/key.pem'].mode == '0600'
           - files['/etc/ssl/acme/localhost/key.pem'].gr_name == 'root'
           - "'BEGIN CERTIFICATE' in amqps_handshake.stdout"
+
+    # --- Issue #39: remote-user (SRAM) accounts are active ---
+    # testuser logged in through REMOTE_USER above, after converge installed the trigger.
+    - name: Count the remote-user accounts, and the inactive ones
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        login_db: galaxy
+        query: >-
+          SELECT count(*) AS remote,
+          count(*) FILTER (WHERE external AND NOT deleted AND NOT active) AS inactive
+          FROM galaxy_user WHERE external
+      register: issue39_users
+
+    - name: Assert remote-user accounts are active
+      ansible.builtin.assert:
+        that:
+          - issue39_users.query_result[0].remote > 0
+          - issue39_users.query_result[0].inactive == 0

@@ -1,0 +1,57 @@
+---
+# Activate remote-user (SRAM) accounts (issue #39).
+#
+# Galaxy's User.__init__ sets active = False. Registration (UserManager.create()) then
+# activates the account, but UserManager.get_or_create_remote_user(), which this Galaxy
+# uses (use_remote_user: true), never does. Galaxy ignores the flag for remote users, but
+# byoc-sync skips inactive accounts, so their BYOC Pulsar forms were never onboarded.
+# These workspaces have no activation step (SRAM admits the users), so a trigger activates
+# remote-user accounts as Galaxy inserts them, and existing ones are activated once.
+#
+# Included from the play's tasks, i.e. after the galaxyproject.galaxy role created the schema.
+- name: Activate remote-user accounts
+  become: true
+  become_user: postgres
+  vars:
+    _galaxy_activation_db: galaxy # database_connection in vars/galaxy_vars.yml
+    _galaxy_activation_sql: |
+      CREATE OR REPLACE FUNCTION public.src_activate_remote_user() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+      BEGIN
+        NEW.active := true;
+        RETURN NEW;
+      END;
+      $$;
+      DROP TRIGGER IF EXISTS src_activate_remote_user ON public.galaxy_user;
+      CREATE TRIGGER src_activate_remote_user BEFORE INSERT ON public.galaxy_user
+        FOR EACH ROW WHEN (NEW.external) EXECUTE FUNCTION public.src_activate_remote_user();
+    # Stored as the trigger's comment: a changed definition is reinstalled.
+    _galaxy_activation_marker: "{{ _galaxy_activation_sql | hash('sha1') }}"
+  block:
+    - name: Read the installed remote-user activation trigger
+      community.postgresql.postgresql_query:
+        login_db: "{{ _galaxy_activation_db }}"
+        query: >-
+          SELECT obj_description(t.oid, 'pg_trigger') AS marker
+          FROM pg_trigger t
+          WHERE t.tgrelid = 'public.galaxy_user'::regclass
+          AND t.tgname = 'src_activate_remote_user'
+          AND t.tgenabled = 'O'
+      register: _galaxy_activation_installed
+      changed_when: false
+
+    - name: Install the remote-user activation trigger
+      when: >-
+        _galaxy_activation_installed.query_result | map(attribute='marker') | list
+        != [_galaxy_activation_marker]
+      community.postgresql.postgresql_query:
+        login_db: "{{ _galaxy_activation_db }}"
+        query: |-
+          {{ _galaxy_activation_sql }}COMMENT ON TRIGGER src_activate_remote_user ON public.galaxy_user IS '{{ _galaxy_activation_marker }}';
+
+    - name: Activate existing remote-user accounts
+      community.postgresql.postgresql_query:
+        login_db: "{{ _galaxy_activation_db }}"
+        query: >-
+          UPDATE public.galaxy_user SET active = true
+          WHERE external AND NOT deleted AND NOT active
