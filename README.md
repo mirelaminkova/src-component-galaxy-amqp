@@ -35,6 +35,8 @@ Galaxy is configured such that members of the CO that are in the SRAM workspace 
 
 Note: only members of the `src_co_admin` group are given permission to install tools on the Galaxy instance.
 
+Galaxy creates accounts for SRAM (remote-user) logins inactive, unlike accounts made by registration. Galaxy itself ignores this, but [byoc-sync](#onboarding-a-byoc-pulsar-via-pr) skips inactive accounts. These workspaces have no activation step, so the playbook installs a PostgreSQL trigger (`src_activate_remote_user` on `galaxy_user`) that activates remote-user accounts as Galaxy creates them, and activates existing ones whenever it (re)installs the trigger (issue #39).
+
 ### Logging in via SSH
 
 The Galaxy VM will be accessible via SSH for users in the Collaborative Organization. However, only users in the CO admin group

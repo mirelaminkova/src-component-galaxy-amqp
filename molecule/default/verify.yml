@@ -189,7 +189,7 @@
         login_db: galaxy
         query: >-
           SELECT count(*) AS remote,
-          count(*) FILTER (WHERE external AND NOT deleted AND NOT active) AS inactive
+          count(*) FILTER (WHERE NOT deleted AND NOT active) AS inactive
           FROM galaxy_user WHERE external
       register: issue39_users
 

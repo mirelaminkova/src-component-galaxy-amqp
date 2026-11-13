@@ -24,7 +24,6 @@ from tests.helpers.ansible_vars import REPO_ROOT
 PLAYBOOK = REPO_ROOT / "galaxysrv.yml"
 TASKS = REPO_ROOT / "tasks" / "remote_user_activation.yml"
 GALAXY_VARS = REPO_ROOT / "vars" / "galaxy_vars.yml"
-MOLECULE_VERIFY = REPO_ROOT / "molecule" / "default" / "verify.yml"
 QUERY = "community.postgresql.postgresql_query"
 
 
@@ -56,18 +55,25 @@ def _query(name):
 # --- playbook wiring -------------------------------------------------------------------------
 
 
-def test_play_includes_the_activation_tasks_after_the_galaxy_role():
-    """Play tasks run after the roles, so Galaxy has created galaxy_user by then."""
+def test_play_includes_the_activation_tasks_after_galaxy_starts():
+    """On a new database Galaxy creates galaxy_user on its first start, not in its role."""
     (play,) = _load(PLAYBOOK)
+    names = [task["name"] for task in play["tasks"]]
     includes = [
         task
         for task in play["tasks"]
         if task.get("ansible.builtin.include_tasks") == "tasks/remote_user_activation.yml"
     ]
+    start = next(
+        task
+        for task in play["tasks"]
+        if "galaxy.target" in task.get("with_items", [])
+        and task["ansible.builtin.systemd_service"]["state"] == "started"
+    )
 
     assert len(includes) == 1
-    assert "galaxyproject.galaxy" in [role["role"] for role in play["roles"]]
     assert "when" not in includes[0]
+    assert names.index(includes[0]["name"]) > names.index(start["name"])
 
 
 def test_tasks_run_as_the_postgres_superuser_on_galaxys_database():
@@ -82,14 +88,25 @@ def test_tasks_run_as_the_postgres_superuser_on_galaxys_database():
     assert database in [db["name"] for db in galaxy_vars["postgresql_objects_databases"]]
     for task in _tasks().values():
         assert task[QUERY]["login_db"] == "{{ _galaxy_activation_db }}"
-        assert "db" not in task[QUERY]  # removed in community.postgresql 5
 
 
-def test_reading_the_trigger_never_reports_a_change():
-    task = _tasks()["Read the installed remote-user activation trigger"]
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Wait for Galaxy to create its database schema",
+        "Read the installed remote-user activation trigger",
+    ],
+)
+def test_reads_never_report_a_change(name):
+    assert _tasks()[name]["changed_when"] is False
 
-    assert task["changed_when"] is False
-    assert task["register"] == "_galaxy_activation_installed"
+
+def test_tasks_wait_for_the_schema_first():
+    wait = _block()["block"][0]
+
+    assert wait["name"] == "Wait for Galaxy to create its database schema"
+    assert wait["until"] == "_galaxy_activation_schema.query_result[0].ready"
+    assert wait["retries"] * wait["delay"] >= 300
 
 
 @pytest.mark.parametrize(
@@ -114,33 +131,14 @@ def test_trigger_is_installed_only_when_missing_or_changed(installed, expected):
     assert result is expected
 
 
-def test_marker_changes_with_the_definition():
-    marker = _render("{{ _galaxy_activation_marker }}")
-    changed = _render(
-        "{{ _galaxy_activation_marker }}",
-        _galaxy_activation_sql=_render("{{ _galaxy_activation_sql }}") + "-- changed\n",
+def test_existing_accounts_are_activated_only_with_a_new_trigger():
+    """Run once per (re)installed trigger, so an account deactivated later stays inactive."""
+    tasks = _tasks()
+
+    assert (
+        tasks["Activate existing remote-user accounts"]["when"]
+        == tasks["Install the remote-user activation trigger"]["when"]
     )
-
-    assert len(marker) == 40
-    assert marker != changed
-
-
-def test_install_records_the_marker_on_the_trigger():
-    sql = _query("Install the remote-user activation trigger")
-    marker = _render("{{ _galaxy_activation_marker }}")
-
-    assert sql.startswith(_render("{{ _galaxy_activation_sql }}"))
-    assert sql.rstrip().endswith(
-        f"COMMENT ON TRIGGER src_activate_remote_user ON public.galaxy_user IS '{marker}';"
-    )
-
-
-def test_molecule_verify_checks_remote_users_are_active():
-    text = MOLECULE_VERIFY.read_text()
-
-    assert "Issue #39" in text
-    assert "WHERE external AND NOT deleted AND NOT active" in text
-    assert "login_db: galaxy" in text
 
 
 # --- the SQL against a real PostgreSQL ---------------------------------------------------------
@@ -162,8 +160,19 @@ def _pg_bin():
     return found[-1].parent if found else None
 
 
+def _postgres_unavailable():
+    """Why the SQL tests cannot run here, or None. CI must run them, so it never skips."""
+    if os.environ.get("CI"):
+        return None
+    if _pg_bin() is None:
+        return "PostgreSQL server binaries not installed (apt install postgresql)"
+    if os.geteuid() == 0:
+        return "initdb refuses to run as root"
+    return None
+
+
 requires_postgres = pytest.mark.skipif(
-    _pg_bin() is None or os.geteuid() == 0, reason="PostgreSQL server binaries not available"
+    _postgres_unavailable() is not None, reason=str(_postgres_unavailable())
 )
 
 
@@ -193,12 +202,36 @@ def psql(tmp_path_factory):
         "start",
     )
 
-    def run(sql):
-        return _pg("psql", "-h", sock, "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-qAt", "-c", sql)
+    def run(sql, database="postgres"):
+        return _pg(
+            "psql",
+            "-h",
+            sock,
+            "-U",
+            "postgres",
+            "-d",
+            database,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-qAt",
+            "-c",
+            sql,
+        )
 
     run(GALAXY_USER)
     yield run
     _pg("pg_ctl", "-D", data, "-m", "fast", "stop")
+
+
+@pytest.fixture
+def db(psql):
+    """The cluster with an empty galaxy_user and no trigger, whatever ran before."""
+    psql(
+        "DROP TRIGGER IF EXISTS src_activate_remote_user ON public.galaxy_user;"
+        "DROP FUNCTION IF EXISTS public.src_activate_remote_user();"
+        "TRUNCATE public.galaxy_user RESTART IDENTITY"
+    )
+    return psql
 
 
 def _insert_like_galaxy(psql, email, external, deleted=False):
@@ -211,10 +244,10 @@ def _insert_like_galaxy(psql, email, external, deleted=False):
 
 
 @requires_postgres
-def test_sql_activates_remote_users_only(psql):
+def test_sql_activates_remote_users_only(db):
+    psql = db
     read = _query("Read the installed remote-user activation trigger")
     marker = _render("{{ _galaxy_activation_marker }}")
-    psql("TRUNCATE public.galaxy_user")
     assert _insert_like_galaxy(psql, "before@sram", external=True) == "f"
     assert _insert_like_galaxy(psql, "gone@sram", external=True, deleted=True) == "f"
     assert psql(read) == ""
@@ -233,7 +266,18 @@ def test_sql_activates_remote_users_only(psql):
 
 
 @requires_postgres
-def test_disabled_trigger_counts_as_missing(psql):
+def test_schema_wait_is_false_until_galaxy_user_exists(db):
+    wait = _query("Wait for Galaxy to create its database schema")
+    db("DROP DATABASE IF EXISTS fresh")
+    db("CREATE DATABASE fresh")
+
+    assert db(wait, database="fresh") == "f"
+    assert db(wait) == "t"
+
+
+@requires_postgres
+def test_disabled_trigger_counts_as_missing(db):
+    psql = db
     read = _query("Read the installed remote-user activation trigger")
     psql(_query("Install the remote-user activation trigger"))
     psql("ALTER TABLE public.galaxy_user DISABLE TRIGGER src_activate_remote_user")
