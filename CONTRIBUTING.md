@@ -39,6 +39,11 @@ Run them by hand on the whole repository:
 .venv/bin/pytest
 ```
 
+`tests/unit/test_remote_user_activation.py` runs SQL against a throwaway PostgreSQL cluster.
+It needs the PostgreSQL server binaries (`apt install postgresql`, found under
+`/usr/lib/postgresql/<version>/bin`) and a non-root user; elsewhere those tests are skipped,
+but never in CI (`CI` set), where a missing PostgreSQL fails them.
+
 pytest enforces 100% branch coverage (`--cov-fail-under=100`, configured in
 `pyproject.toml`). Tests live in `tests/unit/`:
 

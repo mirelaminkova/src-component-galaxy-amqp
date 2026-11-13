@@ -27,6 +27,7 @@ TARGET_DEPENDENCIES = {
     "ansible.builtin.pip": {"python3-packaging"},
     # community.postgresql modules (postgresql_user/db/privs/membership) need psycopg2.
     "role:galaxyproject.postgresql_objects": {"python3-psycopg2"},
+    "community.postgresql.postgresql_query": {"python3-psycopg2"},
     # The role's pip tasks create the venv with `virtualenv -p <module Python>`
     # (no galaxy_virtualenv_command set) and need packaging like any pip task.
     "role:galaxyproject.galaxy": {"python3-virtualenv", "python3-packaging"},

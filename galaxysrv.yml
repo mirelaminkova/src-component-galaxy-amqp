@@ -176,6 +176,11 @@
         - galaxy-tusd.service
         - galaxy.target
 
+    # Galaxy creates remote-user (SRAM) accounts inactive, and byoc-sync skips them (issue #39).
+    # After the services start: Galaxy creates its schema (galaxy_user) on its first start.
+    - name: Activate remote-user accounts
+      ansible.builtin.include_tasks: tasks/remote_user_activation.yml
+
     - name: Run bootstrap
       when: _galaxy_do_bootstrap
       block:
