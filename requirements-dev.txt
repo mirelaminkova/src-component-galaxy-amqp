@@ -32,7 +32,7 @@ galaxy-tool-util-models~=26.0.2
 galaxy-tours~=26.0.2
 galaxy-util~=26.0.2
 galaxy-web-framework~=26.0.2
-galaxy-web-stack~=26.0.2
+galaxy-web-stack~=26.1.2
 fissix~=24.4.24
 # semgrep is not listed: its pins conflict with Galaxy's. It runs from pre-commit's own
 # environment (semgrep==1.184.0 in .pre-commit-config.yaml).
